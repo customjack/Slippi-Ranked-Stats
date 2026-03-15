@@ -1,0 +1,25 @@
+# User data — never commit personal replay databases
+data/
+
+# Python environment
+.venv/
+__pycache__/
+*.pyc
+
+# Auto-generated icon
+crest.ico
+
+# PyInstaller (if ever used again)
+dist/
+build/
+*.spec
+
+# Claude Code settings
+.claude/
+
+# Streamlit local config (may contain machine-specific settings)
+.streamlit/secrets.toml
+
+# Bug screenshots and test files
+bug *.png
+*.db
