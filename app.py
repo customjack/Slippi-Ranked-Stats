@@ -45,7 +45,6 @@ BG          = "#1e1e1e"   # main dark background
 PAPER       = "#2b2b2b"   # chart / card background
 SIDEBAR     = "#141414"   # sidebar near-black
 THEME       = "plotly_dark"
-ONLINE_MODES = ["ranked", "unranked", "direct"]
 
 # ---------------------------------------------------------------------------
 # Page setup
@@ -162,9 +161,6 @@ with st.sidebar:
     fetch_btn  = st.button("📡 Fetch Rating Snapshot", use_container_width=True)
     st.caption("Scan reads new .slp files from your replay folder. "
                "Fetch Rating calls the Slippi API (once per click).")
-
-    st.markdown("---")
-    show_all_modes = st.checkbox("Include unranked/direct in replay count")
 
     st.markdown("---")
     if st.button("⏹ Stop App", use_container_width=True, help="Shut down the dashboard"):
@@ -328,7 +324,7 @@ if scan_btn:
         extra_conns: dict = {}
         try:
             for game in parsed:
-                if not show_all_modes and game["match_type"] != "ranked":
+                if game["match_type"] != "ranked":
                     continue
                 player_code = game.get("player_code", "")
                 if not player_code:
@@ -351,7 +347,7 @@ if scan_btn:
 
         progress_bar.empty()
         status_text.empty()
-        mode_label = "game(s)" if show_all_modes else "ranked game(s)"
+        mode_label = "ranked game(s)"
         st.sidebar.success(
             f"Added {new_games_for_current} new {mode_label} for {connect_code}. "
             f"({len(all_scanned)} files processed)"
@@ -417,11 +413,10 @@ def _cutoff(date_range: str) -> str | None:
 
 cutoff = _cutoff(date_range)
 ranked_games   = db.get_games(conn, match_type="ranked", since=cutoff)
-all_mode_games = db.get_games(conn, match_type=ONLINE_MODES, since=cutoff) if show_all_modes else ranked_games
 snapshots      = db.get_snapshots(conn, connect_code)
 season_hist    = db.get_season_history(conn, connect_code)
 
-if not all_mode_games and not snapshots and not season_hist:
+if not ranked_games and not snapshots and not season_hist:
     st.title(f"No data yet for **{connect_code}**")
     col1, col2 = st.columns(2)
     col1.info("Click **Scan Replays** to import your ranked games from .slp files.")
@@ -474,10 +469,8 @@ global_rank = snap_df.iloc[-1]["global_rank"] if not snap_df.empty else None
 # ---------------------------------------------------------------------------
 
 st.title(connect_code)
-header_game_count = len(all_mode_games)
-mode_suffix = "games (all modes)" if show_all_modes else "ranked games"
 st.caption(f"Date range: **{date_range}**  ·  "
-           f"{header_game_count} {mode_suffix}  ·  "
+           f"{len(games_df)} ranked games  ·  "
            f"{len(snap_df)} rating snapshots")
 
 def _stat_card(label: str, value: str, subvalue: str = "", color: str = "#ffffff") -> str:

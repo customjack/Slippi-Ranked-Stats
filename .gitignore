@@ -1,5 +1,6 @@
-# User data — never commit personal replay databases
-data/
+# User data — TEMP: data/ and *.db unblocked for dev on second machine
+# TODO: restore before publishing — run: git rm --cached data/*.db && restore these two lines
+# data/
 
 # Python environment
 .venv/
@@ -20,6 +21,10 @@ build/
 # Streamlit local config (may contain machine-specific settings)
 .streamlit/secrets.toml
 
+# Environment / secrets files
+.env
+*.env
+
 # Bug screenshots and test files
 bug *.png
-*.db
+# *.db  ← TEMP: unblocked for dev on second machine
