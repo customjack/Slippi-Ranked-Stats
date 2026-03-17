@@ -22,17 +22,16 @@ A local desktop analytics dashboard for your Slippi ranked matches. Track your r
 ## Requirements
 
 - Windows 10 or 11
-- [Python](https://www.python.org/downloads/) — free, install once, check **"Add Python to PATH"**
 - Your Slippi replays folder (default: `Documents\Slippi\`)
 
 ---
 
 ## Installation
 
-1. Download and extract this folder anywhere (Desktop or Documents recommended)
-2. Double-click **`run.bat`**
-   - First run installs dependencies (~1 minute) and creates a **Slippi Ranked Stats** shortcut on your Desktop
-3. From now on, launch the app from the Desktop shortcut — no terminal, no fuss
+1. Download and extract the `SlippiRankedStats` folder anywhere (Desktop or Documents recommended)
+2. Double-click **`SlippiRankedStats.exe`**
+   - Windows SmartScreen may warn you the first time — click **More info → Run anyway**
+   - Windows Firewall may ask to allow network access — click **Allow** (the app only connects to `slippi.gg` and your local machine)
 
 Your stats are saved locally to `Documents\Slippi Ranked Stats\` and persist between sessions.
 
@@ -59,12 +58,12 @@ Your stats are saved locally to `Documents\Slippi Ranked Stats\` and persist bet
 
 ## Closing the app
 
-Click **Stop App** in the sidebar, or close the browser tab and end the process via Task Manager.
+Close the app window to exit.
 
 ---
 
-## Support / Donations
+## Support
 
-If you find this useful, donations are appreciated: [link]
+Enjoying the app? [Support on Patreon](https://www.patreon.com/joeydonuts)
 
 Issues and feedback: [GitHub Issues link]

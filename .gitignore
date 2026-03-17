@@ -1,6 +1,5 @@
-# User data — TEMP: data/ and *.db unblocked for dev on second machine
-# TODO: restore before publishing — run: git rm --cached data/*.db && restore these two lines
-# data/
+# User data — excluded from repo (each user's data is local-only)
+data/
 
 # Python environment
 .venv/
@@ -27,4 +26,4 @@ build/
 
 # Bug screenshots and test files
 bug *.png
-# *.db  ← TEMP: unblocked for dev on second machine
+*.db

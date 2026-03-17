@@ -4,3 +4,4 @@ plotly>=5.22.0
 requests>=2.32.0
 Pillow>=10.0.0
 py-slippi>=1.6.2
+pywebview>=4.0.0
