@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/srs-logo.svg" alt="Slippi Ranked Stats" width="120" />
+</p>
+
 # Slippi Ranked Stats
 
 A desktop app for tracking your Super Smash Bros. Melee ranked stats on Slippi. Scan your replay folder and get detailed breakdowns of your performance — matchups, stages, sessions, and more.
