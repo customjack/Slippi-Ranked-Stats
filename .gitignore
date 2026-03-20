@@ -1,29 +1,7 @@
-# User data — excluded from repo (each user's data is local-only)
-data/
-
-# Python environment
-.venv/
-__pycache__/
-*.pyc
-
-# Auto-generated icon
-crest.ico
-
-# PyInstaller (if ever used again)
+node_modules/
 dist/
-build/
-*.spec
-
-# Claude Code settings
-.claude/
-
-# Streamlit local config (may contain machine-specific settings)
-.streamlit/secrets.toml
-
-# Environment / secrets files
+src-tauri/target/
 .env
-*.env
-
-# Bug screenshots and test files
-bug *.png
-*.db
+srs.key
+srs.key.pub
+.claude/

@@ -1,0 +1,36 @@
+[package]
+name = "slippi-ranked-stats"
+version = "1.1.8"
+description = "Slippi Ranked Stats Dashboard"
+authors = []
+edition = "2021"
+
+[lib]
+name = "slippi_ranked_stats_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "slippi-ranked-stats"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+tauri-plugin-fs = { version = "2" }
+tauri-plugin-dialog = { version = "2" }
+tauri-plugin-shell = { version = "2" }
+tauri-plugin-http = { version = "2" }
+tauri-plugin-updater = { version = "2" }
+tauri-plugin-process = { version = "2" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
