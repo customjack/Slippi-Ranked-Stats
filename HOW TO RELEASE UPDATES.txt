@@ -33,12 +33,12 @@ RELEASING A NEW VERSION (do this every time)
 
 4. Commit and push to GitHub:
    git add .
-   git commit -m "Release vX.X.X"
+   git commit -m "Release v1.1.8"
    git push
 
 5. Create and push a version tag:
-   git tag vX.X.X
-   git push origin vX.X.X
+   git tag v1.1.8
+   git push origin v1.1.8
 
 6. GitHub Actions will automatically:
    - Build the app
