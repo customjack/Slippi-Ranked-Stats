@@ -3,11 +3,11 @@
   import { CHARACTERS } from "../../lib/parser";
   import BarChart from "../charts/BarChart.svelte";
 
-  const MIN_GAMES = 3;
+  const MIN_SETS = 1;
 
   // Character filter — hidden chars are excluded from stats
   let hiddenChars = $state<number[]>([]);
-  let allCharIds = $derived([...new Set($rankedGames.map((g) => g.opponent_char_id))].sort());
+  let allCharIds = $derived([...new Set($sets.flatMap((s) => s.opponent_char_ids))].sort());
 
   function toggleChar(id: number) {
     if (hiddenChars.includes(id)) {
@@ -17,22 +17,24 @@
     }
   }
 
-  // Filtered games — exclude hidden characters
+  // Filtered sets — exclude hidden characters
   let filtered = $derived(hiddenChars.length > 0
-    ? $rankedGames.filter((g) => !hiddenChars.includes(g.opponent_char_id))
-    : $rankedGames);
+    ? $sets.filter((s) => !s.opponent_char_ids.some((id) => hiddenChars.includes(id)))
+    : $sets);
 
-  // Opponent char win rates
+  // Opponent char win rates (set-based)
   let oppCharStats = $derived((() => {
     const m = new Map<number, { wins: number; total: number }>();
-    for (const g of filtered) {
-      const e = m.get(g.opponent_char_id) ?? { wins: 0, total: 0 };
-      e.total++;
-      if (g.result === "win" || g.result === "lras_win") e.wins++;
-      m.set(g.opponent_char_id, e);
+    for (const s of filtered) {
+      for (const id of s.opponent_char_ids) {
+        const e = m.get(id) ?? { wins: 0, total: 0 };
+        e.total++;
+        if (s.result === "win") e.wins++;
+        m.set(id, e);
+      }
     }
     return [...m.entries()]
-      .filter(([, v]) => v.total >= MIN_GAMES)
+      .filter(([, v]) => v.total >= MIN_SETS)
       .map(([id, v]) => ({
         id,
         name: CHARACTERS[id] ?? `Char ${id}`,
@@ -40,27 +42,29 @@
         total: v.total,
         pct: (v.wins / v.total) * 100,
       }))
-      .sort((a, b) => a.pct - b.pct);
+      .sort((a, b) => b.name.localeCompare(a.name));
   })());
 
-  // Your character breakdown
+  // Your character breakdown (set-based)
   let myCharStats = $derived((() => {
     const m = new Map<number, { wins: number; total: number }>();
-    for (const g of filtered) {
-      const e = m.get(g.player_char_id) ?? { wins: 0, total: 0 };
-      e.total++;
-      if (g.result === "win" || g.result === "lras_win") e.wins++;
-      m.set(g.player_char_id, e);
+    for (const s of filtered) {
+      for (const id of s.player_char_ids) {
+        const e = m.get(id) ?? { wins: 0, total: 0 };
+        e.total++;
+        if (s.result === "win") e.wins++;
+        m.set(id, e);
+      }
     }
     return [...m.entries()]
-      .filter(([, v]) => v.total >= MIN_GAMES)
+      .filter(([, v]) => v.total >= MIN_SETS)
       .map(([id, v]) => ({
         name: CHARACTERS[id] ?? `Char ${id}`,
         wins: v.wins,
         total: v.total,
         pct: (v.wins / v.total) * 100,
       }))
-      .sort((a, b) => b.total - a.total);
+      .sort((a, b) => b.name.localeCompare(a.name));
   })());
 
   // Recent sets
@@ -129,7 +133,7 @@
 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-bottom:16px">
   {#if oppCharStats.length > 0}
     <div class="card">
-      <div class="section-title">Win % vs Opponent Character (min {MIN_GAMES} games)</div>
+      <div class="section-title">Win % vs Opponent Character</div>
       <BarChart
         categories={oppCharStats.map((c) => `${c.name} (${c.total})`)}
         values={oppCharStats.map((c) => c.pct)}
@@ -142,7 +146,7 @@
 
   {#if myCharStats.length > 0}
     <div class="card">
-      <div class="section-title">Your Character Win % (min {MIN_GAMES} games)</div>
+      <div class="section-title">Your Character Win %</div>
       <BarChart
         categories={myCharStats.map((c) => `${c.name} (${c.total})`)}
         values={myCharStats.map((c) => c.pct)}

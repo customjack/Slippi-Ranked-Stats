@@ -77,6 +77,12 @@ html, body, #app {
   padding: 10px 12px;
   text-align: center;
 }
+.card-grid .stat-card {
+  padding: 6px 10px;
+}
+.card-grid .stat-card .value {
+  font-size: 17px;
+}
 
 .stat-card .label {
   font-size: 11px;
@@ -91,6 +97,8 @@ html, body, #app {
   font-weight: 700;
   color: var(--text);
 }
+.stat-card .value.win-text  { color: var(--win); }
+.stat-card .value.loss-text { color: var(--loss); }
 
 .stat-card .sub {
   font-size: 11px;

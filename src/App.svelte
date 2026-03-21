@@ -3,16 +3,13 @@
   import Header from "./components/Header.svelte";
   import RecentSession from "./components/tabs/RecentSession.svelte";
   import MatchupStats from "./components/tabs/MatchupStats.svelte";
-  import StageStats from "./components/tabs/StageStats.svelte";
   import RatingProgression from "./components/tabs/RatingProgression.svelte";
   import AllTimeStats from "./components/tabs/AllTimeStats.svelte";
-  import { activeTab, connectCode, replayDir, games, snapshots, seasons, isScanning, scanProgress, statusMessage } from "./lib/store";
+  import { activeTab, connectCode, games, snapshots, seasons } from "./lib/store";
   import { getDb, getGames, getSnapshots, getSeasons } from "./lib/db";
-  import { scanDirectory } from "./lib/parser";
   import { onMount } from "svelte";
   import { check } from "@tauri-apps/plugin-updater";
   import { relaunch } from "@tauri-apps/plugin-process";
-  import { get } from "svelte/store";
 
   let updateAvailable = $state(false);
   let updateVersion = $state("");
@@ -20,7 +17,6 @@
   let updateError = $state("");
 
   onMount(async () => {
-    // Check for updates
     try {
       const update = await check();
       if (update?.available) {
@@ -30,45 +26,28 @@
     } catch {
       // Silently ignore — no network or no release yet
     }
+  });
 
-    // Load saved data and auto-scan on startup
-    const code = get(connectCode);
-    const dir = get(replayDir);
+  // Reload all data whenever the connect code changes
+  $effect(() => {
+    const code = $connectCode;
     if (!code) return;
-
-    try {
-      const db = await getDb(code);
-
-      // Load existing data from DB immediately so stats show right away
-      const loadedGames = await getGames(db);
-      games.set(loadedGames);
-      const loadedSnaps = await getSnapshots(db, code);
-      snapshots.set(loadedSnaps);
-      const loadedSeasons = await getSeasons(db, code);
-      seasons.set(loadedSeasons);
-
-      // Auto-scan for new replays if a folder is configured
-      if (dir) {
-        isScanning.set(true);
-        scanProgress.set(null);
-        statusMessage.set("Auto-scanning for new replays…");
-        try {
-          const { gamesInserted } = await scanDirectory(dir, code, db, (p) => scanProgress.set(p));
-          if (gamesInserted > 0) {
-            const refreshed = await getGames(db);
-            games.set(refreshed);
-          }
-          statusMessage.set(gamesInserted > 0 ? `Auto-scan found ${gamesInserted} new game(s).` : "");
-        } catch {
-          statusMessage.set("");
-        } finally {
-          isScanning.set(false);
-          scanProgress.set(null);
-        }
+    (async () => {
+      try {
+        const db = await getDb(code);
+        const loadedGames = await getGames(db);
+        games.set(loadedGames);
+        const loadedSnaps = await getSnapshots(db, code);
+        snapshots.set(loadedSnaps);
+        const loadedSeasons = await getSeasons(db, code);
+        seasons.set(loadedSeasons);
+      } catch {
+        // DB not ready yet — user hasn't scanned for this code
+        games.set([]);
+        snapshots.set([]);
+        seasons.set([]);
       }
-    } catch {
-      // DB not ready yet — user hasn't scanned before
-    }
+    })();
   });
 
   async function installUpdate() {
@@ -86,15 +65,28 @@
     }
   }
 
+  // Zoom support: Ctrl+/Ctrl-/Ctrl+0
+  let zoom = $state(1.0);
+  function applyZoom(delta: number) {
+    zoom = Math.min(2.0, Math.max(0.5, Math.round((zoom + delta) * 10) / 10));
+    document.documentElement.style.zoom = String(zoom);
+  }
+  function handleKeydown(e: KeyboardEvent) {
+    if (!e.ctrlKey) return;
+    if (e.key === "=" || e.key === "+") { e.preventDefault(); applyZoom(+0.1); }
+    else if (e.key === "-") { e.preventDefault(); applyZoom(-0.1); }
+    else if (e.key === "0") { e.preventDefault(); zoom = 1.0; document.documentElement.style.zoom = "1"; }
+  }
+
   const TABS = [
     { label: "⚡ Last Session" },
     { label: "🎮 Matchup Stats" },
-    { label: "🗺️ Stage Stats" },
     { label: "📊 All-Time" },
     { label: "📈 Rating Progression" },
   ];
 </script>
 
+<svelte:window onkeydown={handleKeydown} />
 <div class="layout">
   <Sidebar />
 
@@ -134,10 +126,8 @@
       {:else if $activeTab === 1}
         <MatchupStats />
       {:else if $activeTab === 2}
-        <StageStats />
-      {:else if $activeTab === 3}
         <AllTimeStats />
-      {:else if $activeTab === 4}
+      {:else if $activeTab === 3}
         <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:300px; gap:12px">
           <div style="font-size:48px">📈</div>
           <div style="font-size:22px; font-weight:700; color:var(--text)">Rating Progression</div>

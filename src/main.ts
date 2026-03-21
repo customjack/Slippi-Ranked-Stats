@@ -8,7 +8,11 @@ function showError(err: unknown) {
 }
 
 window.addEventListener("unhandledrejection", (e) => showError(e.reason));
-window.addEventListener("error", (e) => showError(e.error ?? e.message));
+window.addEventListener("error", (e) => {
+  // ResizeObserver loop warning is harmless (fired by ECharts during layout changes)
+  if (String(e.message).includes("ResizeObserver")) return;
+  showError(e.error ?? e.message);
+});
 
 try {
   mount(App, { target: document.getElementById("app")! });

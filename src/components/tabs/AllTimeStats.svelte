@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { rankedGames, sets } from "../../lib/store";
+  import { sets } from "../../lib/store";
+  import { STAGES } from "../../lib/parser";
   import BarChart from "../charts/BarChart.svelte";
 
-  const MIN_GAMES_HOUR = 3;
+  const MIN_SETS_HOUR = 3;
 
   // Set stats
   let totalSets = $derived($sets.length);
@@ -10,9 +11,9 @@
   let setLosses = $derived(totalSets - setWins);
   let setWinPct = $derived(totalSets > 0 ? (setWins / totalSets) * 100 : 0);
 
-  // Game stats
-  let totalGames = $derived($rankedGames.length);
-  let gameWins = $derived($rankedGames.filter((g) => g.result === "win" || g.result === "lras_win").length);
+  // Game stats (individual games, kept for the Game Win % card only)
+  let totalGames = $derived($sets.reduce((n, s) => n + s.games.length, 0));
+  let gameWins = $derived($sets.reduce((n, s) => n + s.games.filter((g) => g.result === "win" || g.result === "lras_win").length, 0));
   let gameLosses = $derived(totalGames - gameWins);
   let gameWinPct = $derived(totalGames > 0 ? (gameWins / totalGames) * 100 : 0);
 
@@ -35,18 +36,40 @@
     return { pct: (won / went3.length) * 100, won, total: went3.length };
   })());
 
-  // Time-of-day win % by hour
+  // Stage stats (set-based)
+  let stageStats = $derived((() => {
+    const m = new Map<number, { wins: number; losses: number }>();
+    for (const s of $sets) {
+      for (const id of s.stage_ids) {
+        const e = m.get(id) ?? { wins: 0, losses: 0 };
+        if (s.result === "win") e.wins++; else e.losses++;
+        m.set(id, e);
+      }
+    }
+    return [...m.entries()]
+      .map(([id, v]) => ({
+        id, name: STAGES[id] ?? `Stage ${id}`,
+        wins: v.wins, losses: v.losses,
+        total: v.wins + v.losses,
+        pct: (v.wins / (v.wins + v.losses)) * 100,
+      }))
+      .sort((a, b) => b.total - a.total);
+  })());
+  let bestStage = $derived(stageStats.filter((s) => s.total >= 3).sort((a, b) => b.pct - a.pct).at(0));
+  let worstStage = $derived(stageStats.filter((s) => s.total >= 3).sort((a, b) => a.pct - b.pct).at(0));
+
+  // Time-of-day win % by hour (set-based)
   let hourStats = $derived((() => {
     const m = new Map<number, { wins: number; total: number }>();
-    for (const g of $rankedGames) {
-      const hour = new Date(g.timestamp).getHours();
+    for (const s of $sets) {
+      const hour = new Date(s.timestamp).getHours();
       const e = m.get(hour) ?? { wins: 0, total: 0 };
       e.total++;
-      if (g.result === "win" || g.result === "lras_win") e.wins++;
+      if (s.result === "win") e.wins++;
       m.set(hour, e);
     }
     return [...m.entries()]
-      .filter(([, v]) => v.total >= MIN_GAMES_HOUR)
+      .filter(([, v]) => v.total >= MIN_SETS_HOUR)
       .map(([h, v]) => ({
         hour: `${h}:00`,
         wins: v.wins,
@@ -91,7 +114,7 @@
 <!-- Time of day chart -->
 {#if hourStats.length > 0}
   <div class="card">
-    <div class="section-title">Win % by Time of Day (min {MIN_GAMES_HOUR} games per hour)</div>
+    <div class="section-title">Win % by Time of Day (min {MIN_SETS_HOUR} sets per hour)</div>
     <BarChart
       categories={hourStats.map((h) => `${h.hour} (${h.total})`)}
       values={hourStats.map((h) => h.pct)}
@@ -102,4 +125,33 @@
   </div>
 {:else}
   <p class="muted">Not enough data yet for time-of-day analysis.</p>
+{/if}
+
+<!-- Stage stats -->
+{#if bestStage && worstStage}
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px; margin-bottom:16px">
+    <div class="card" style="border-top: 3px solid var(--win)">
+      <div class="label">Best Stage</div>
+      <div style="font-size:16px; font-weight:700; color:var(--win); margin: 4px 0">{bestStage.name}</div>
+      <div class="muted">{bestStage.pct.toFixed(1)}% ({bestStage.wins}W–{bestStage.losses}L)</div>
+    </div>
+    <div class="card" style="border-top: 3px solid var(--loss)">
+      <div class="label">Worst Stage</div>
+      <div style="font-size:16px; font-weight:700; color:var(--loss); margin: 4px 0">{worstStage.name}</div>
+      <div class="muted">{worstStage.pct.toFixed(1)}% ({worstStage.wins}W–{worstStage.losses}L)</div>
+    </div>
+  </div>
+{/if}
+
+{#if stageStats.length > 0}
+  <div class="card">
+    <div class="section-title">Stage Win %</div>
+    <BarChart
+      categories={stageStats.map((s) => `${s.name} (${s.total})`)}
+      values={stageStats.map((s) => s.pct)}
+      label="Win %"
+      horizontal={true}
+      paired={true}
+    />
+  </div>
 {/if}

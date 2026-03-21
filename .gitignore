@@ -5,3 +5,4 @@ src-tauri/target/
 srs.key
 srs.key.pub
 .claude/
+HOW TO RELEASE UPDATES.txt

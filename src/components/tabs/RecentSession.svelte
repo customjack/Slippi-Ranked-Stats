@@ -1,5 +1,15 @@
 <script lang="ts">
   import { sessions, rankedGames } from "../../lib/store";
+
+  function downloadCSV(data: any[], name: string) {
+    const keys = Object.keys(data[0] ?? {});
+    const rows = [keys.join(","), ...data.map((r) => keys.map((k) => r[k]).join(","))];
+    const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+  }
   import { CHARACTERS, STAGES } from "../../lib/parser";
   import LineChart from "../charts/LineChart.svelte";
   import BarChart from "../charts/BarChart.svelte";
@@ -8,15 +18,15 @@
   let session = $derived($sessions.at(-1));
   let sessionGames = $derived(session?.sets.flatMap((s) => s.games) ?? []);
 
-  // Characters faced (win rates vs each opponent char)
+  // Characters faced (set-based win rates)
   let charStats = $derived((() => {
     const m = new Map<number, { wins: number; total: number }>();
     for (const s of session?.sets ?? []) {
-      for (const g of s.games) {
-        const e = m.get(g.opponent_char_id) ?? { wins: 0, total: 0 };
+      for (const id of s.opponent_char_ids) {
+        const e = m.get(id) ?? { wins: 0, total: 0 };
         e.total++;
-        if (g.result === "win" || g.result === "lras_win") e.wins++;
-        m.set(g.opponent_char_id, e);
+        if (s.result === "win") e.wins++;
+        m.set(id, e);
       }
     }
     return [...m.entries()]
@@ -24,14 +34,16 @@
       .sort((a, b) => b.total - a.total);
   })());
 
-  // Stage stats for this session
+  // Stage stats for this session (set-based)
   let stageStats = $derived((() => {
     const m = new Map<number, { wins: number; total: number }>();
-    for (const g of sessionGames) {
-      const e = m.get(g.stage_id) ?? { wins: 0, total: 0 };
-      e.total++;
-      if (g.result === "win" || g.result === "lras_win") e.wins++;
-      m.set(g.stage_id, e);
+    for (const s of session?.sets ?? []) {
+      for (const id of s.stage_ids) {
+        const e = m.get(id) ?? { wins: 0, total: 0 };
+        e.total++;
+        if (s.result === "win") e.wins++;
+        m.set(id, e);
+      }
     }
     return [...m.entries()]
       .map(([id, v]) => ({ name: STAGES[id] ?? `Stage ${id}`, ...v, pct: (v.wins / v.total) * 100 }))
@@ -168,4 +180,45 @@
       />
     </div>
   {/if}
+
+  <!-- Session History -->
+  <div class="section-title" style="margin-top:16px; margin-bottom:8px">
+    Session History
+    <button
+      onclick={() => downloadCSV($sessions.map((s, i) => ({
+        session: i + 1,
+        date: s.start.slice(0, 10),
+        sets: s.sets.length,
+        wins: s.setWins,
+        losses: s.setLosses,
+        win_pct: s.sets.length > 0 ? ((s.setWins / s.sets.length) * 100).toFixed(1) : "0.0",
+        duration: fmt(s.durationMin),
+      })), "session_history.csv")}
+      style="font-size:11px; margin-left:8px; background:var(--card); border:1px solid var(--border); color:var(--muted); padding:2px 8px; border-radius:4px; cursor:pointer"
+    >
+      Export CSV
+    </button>
+  </div>
+  <div class="card" style="padding:0; overflow:hidden; max-height:520px; overflow-y:auto">
+    <table>
+      <thead>
+        <tr><th>#</th><th>Date</th><th>Duration</th><th>Sets</th><th>W</th><th>L</th><th>Win %</th></tr>
+      </thead>
+      <tbody>
+        {#each [...$sessions].reverse() as s, i}
+          <tr>
+            <td class="muted">{$sessions.length - i}</td>
+            <td>{s.start.slice(0, 10)}</td>
+            <td class="muted">{fmt(s.durationMin)}</td>
+            <td>{s.sets.length}</td>
+            <td class="win-text">{s.setWins}</td>
+            <td class="loss-text">{s.setLosses}</td>
+            <td class={s.sets.length > 0 ? (s.setWins / s.sets.length >= 0.5 ? "win-text" : "loss-text") : ""}>
+              {s.sets.length > 0 ? ((s.setWins / s.sets.length) * 100).toFixed(1) + "%" : "—"}
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  </div>
 {/if}

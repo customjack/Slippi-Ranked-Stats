@@ -263,10 +263,13 @@ export async function clearGames(db: Database): Promise<void> {
 export async function markFilesScanned(filenames: string[]): Promise<void> {
   if (filenames.length === 0) return;
   const sdb = await getScannedDb();
-  for (const f of filenames) {
+  const CHUNK = 500;
+  for (let i = 0; i < filenames.length; i += CHUNK) {
+    const chunk = filenames.slice(i, i + CHUNK);
+    const placeholders = chunk.map((_, j) => `($${j + 1})`).join(", ");
     await sdb.execute(
-      `INSERT OR IGNORE INTO scanned_files (filename) VALUES ($1)`,
-      [f]
+      `INSERT OR IGNORE INTO scanned_files (filename) VALUES ${placeholders}`,
+      chunk
     );
   }
 }

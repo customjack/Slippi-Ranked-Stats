@@ -28,17 +28,39 @@ RELEASING A NEW VERSION (do this every time)
    - src-tauri/Cargo.toml        → version = "x.x.x"
    - package.json                → "version": "x.x.x"
 
-3. Copy the updated project files into your GitHub-connected folder
-   (make sure to include .github/workflows/release.yml).
+3. Copy the updated project files into your GitHub-connected folder.
+
+   COPY these:
+     src/
+     src-tauri/
+     public/
+     .github/
+     index.html
+     package.json
+     package-lock.json
+     vite.config.ts
+     tsconfig.json
+     tsconfig.node.json
+     .gitignore
+     README.md
+     PLAN.md
+
+   DO NOT COPY these (too large, sensitive, or auto-generated):
+     node_modules/         — users run "npm install" themselves
+     dist/                 — build output, ignored
+     src-tauri/target/     — Rust build artifacts, very large
+     srs.key               — private signing key, never commit this
+     srs.key.pub           — public key already embedded in tauri.conf.json
+     HOW TO RELEASE UPDATES.txt — this file, for your eyes only
 
 4. Commit and push to GitHub:
    git add .
-   git commit -m "Release v1.1.8"
+   git commit -m "Release vX.X.X"
    git push
 
 5. Create and push a version tag:
-   git tag v1.1.8
-   git push origin v1.1.8
+   git tag vX.X.X
+   git push origin vX.X.X
 
 6. GitHub Actions will automatically:
    - Build the app

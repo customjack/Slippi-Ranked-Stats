@@ -1,14 +1,5 @@
 <script lang="ts">
-  import { headerStats, sets, snapshots } from "../lib/store";
-  import { getRankTier } from "../lib/parser";
-
-  function fmtSnapshotTime(iso: string): string {
-    if (!iso) return "";
-    const d = new Date(iso);
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" })
-      + " at "
-      + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  }
+  import { headerStats, sets } from "../lib/store";
 
   // Recent form: last N sets
   let formCount = $state(10);
@@ -16,33 +7,10 @@
 </script>
 
 <div class="card-grid">
-  <!-- Rating -->
-  <div class="stat-card">
-    <div class="label">Rating</div>
-    {#if $snapshots.length === 0}
-      <div class="value muted">—</div>
-      <div class="sub" style="color:#f39c12; font-size:10px">Click "Get Current Rating"</div>
-    {:else}
-      {@const tier = getRankTier($headerStats.rating)}
-      {@const lastSnap = $snapshots.at(-1)}
-      <div class="value">{$headerStats.rating.toFixed(1)}</div>
-      <div class="sub" style="color:{tier.color}; font-weight:600">{tier.name}</div>
-      {#if $headerStats.ratingDelta !== 0}
-        <div class="sub" class:win-text={$headerStats.ratingDelta > 0} class:loss-text={$headerStats.ratingDelta < 0}>
-          {$headerStats.ratingDelta > 0 ? "+" : ""}{$headerStats.ratingDelta.toFixed(1)}
-        </div>
-      {/if}
-      {#if lastSnap}
-        <div class="sub muted" style="font-size:10px">Updated {fmtSnapshotTime(lastSnap.timestamp)}</div>
-      {/if}
-    {/if}
-  </div>
-
   <!-- Set Win % -->
   <div class="stat-card">
     <div class="label">Set Win %</div>
     <div class="value">{$headerStats.setWinPct.toFixed(1)}%</div>
-    <div class="sub">{$headerStats.setWins}W – {$headerStats.setLosses}L</div>
   </div>
 
   <!-- Set Wins -->

@@ -89,12 +89,17 @@ export interface ScanResult {
   firstError: string | null;
 }
 
+let _scanCancelled = false;
+export function cancelScan() { _scanCancelled = true; }
+
 export async function scanDirectory(
   dirPath: string,
   connectCode: string,
   db: Database,
   onProgress?: (p: ScanProgress) => void
 ): Promise<ScanResult> {
+  _scanCancelled = false;
+
   const slpFiles = await collectSlpFiles(dirPath);
   const already = await getScannedFilenames();
 
@@ -114,6 +119,7 @@ export async function scanDirectory(
   const CONCURRENCY = 8;
 
   for (let i = 0; i < toProcess.length; i += CONCURRENCY) {
+    if (_scanCancelled) break;
     const batch = toProcess.slice(i, i + CONCURRENCY);
 
     // Parse files concurrently (bounded by CONCURRENCY)
