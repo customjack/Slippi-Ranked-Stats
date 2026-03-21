@@ -34,16 +34,9 @@ jobs:
         run: npm install
 
       - name: Build Tauri app
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         run: npm run tauri build
 
-      - name: List bundle artifacts
-        shell: pwsh
-        run: Get-ChildItem -Recurse "src-tauri/target/release/bundle" | Select-Object FullName
-
-      - name: Test manual sign
+      - name: Sign installer
         shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -51,22 +44,43 @@ jobs:
           exe=$(find src-tauri/target/release/bundle/nsis -name "*.exe" | head -1)
           echo "Signing: $exe"
           npm run tauri -- signer sign --private-key "$TAURI_SIGNING_PRIVATE_KEY" --password "" "$exe"
-          echo "--- Files after signing ---"
-          ls -la "src-tauri/target/release/bundle/nsis/"
+          echo "EXE_PATH=$exe" >> $GITHUB_ENV
+          echo "SIG_PATH=${exe}.sig" >> $GITHUB_ENV
 
-      - name: Release
-        uses: tauri-apps/tauri-action@v0
+      - name: Generate latest.json and create release
+        shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Slippi Ranked Stats ${{ github.ref_name }}'
-          releaseBody: |
-            Download the installer below to update Slippi Ranked Stats.
-          releaseDraft: false
-          prerelease: false
-          updaterJsonPreferNsis: true
-          updaterJsonKeepUniversal: false
-          createUpdaterArtifacts: true
+        run: |
+          $tag     = "${{ github.ref_name }}"
+          $version = $tag.TrimStart('v')
+          $exePath = $env:EXE_PATH
+          $sigPath = $env:SIG_PATH
+          $exeName = Split-Path $exePath -Leaf
+          $sig     = (Get-Content $sigPath -Raw).Trim()
+          $repo    = "Joey-Farah/Slippi-Ranked-Stats"
+          $encoded = [Uri]::EscapeDataString($exeName)
+          $url     = "https://github.com/$repo/releases/download/$tag/$encoded"
+          $pubDate = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+
+          $json = [ordered]@{
+            version  = $version
+            pub_date = $pubDate
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{
+                signature = $sig
+                url       = $url
+              }
+            }
+          } | ConvertTo-Json -Depth 5
+
+          $json | Out-File -FilePath latest.json -Encoding utf8NoBOM
+
+          Write-Host "=== latest.json ==="
+          Write-Host $json
+
+          gh release create $tag `
+            --title "Slippi Ranked Stats $tag" `
+            --notes "Download the installer below to update Slippi Ranked Stats." `
+            "$exePath" `
+            latest.json
