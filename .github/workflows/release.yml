@@ -43,6 +43,17 @@ jobs:
         shell: pwsh
         run: Get-ChildItem -Recurse "src-tauri/target/release/bundle" | Select-Object FullName
 
+      - name: Test manual sign
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          $exe = Get-ChildItem -Recurse "src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1 -ExpandProperty FullName
+          Write-Host "Signing: $exe"
+          npm run tauri -- signer sign -k "$env:TAURI_SIGNING_PRIVATE_KEY" -p "" "$exe"
+          Write-Host "--- Files after signing ---"
+          Get-ChildItem -Recurse "src-tauri/target/release/bundle/nsis/" | Select-Object FullName
+
       - name: Release
         uses: tauri-apps/tauri-action@v0
         env:
