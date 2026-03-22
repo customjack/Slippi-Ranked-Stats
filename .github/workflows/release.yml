@@ -59,7 +59,7 @@ jobs:
           $exeName = Split-Path $exePath -Leaf
           $sig     = (Get-Content $sigPath -Raw).Trim()
           $repo    = "Joey-Farah/Slippi-Ranked-Stats"
-          $encoded = [Uri]::EscapeDataString($exeName)
+          $encoded = $exeName -replace ' ', '.'
           $url     = "https://github.com/$repo/releases/download/$tag/$encoded"
           $pubDate = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
 
