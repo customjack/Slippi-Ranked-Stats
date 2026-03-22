@@ -58,6 +58,7 @@ export interface SetResult {
   wins: number;
   losses: number;
   result: "win" | "loss";
+  hasLras: boolean; // true if any game ended via disconnect/quit
 }
 
 export const sets = derived(rankedGames, ($games): SetResult[] => {
@@ -76,6 +77,7 @@ export const sets = derived(rankedGames, ($games): SetResult[] => {
 
     const wins = gs.filter((g) => g.result === "win" || g.result === "lras_win").length;
     const losses = gs.length - wins;
+    const hasLras = gs.some((g) => g.result === "lras_win" || g.result === "lras_loss");
 
     results.push({
       match_id,
@@ -88,6 +90,7 @@ export const sets = derived(rankedGames, ($games): SetResult[] => {
       wins,
       losses,
       result: wins > losses ? "win" : "loss",
+      hasLras,
     });
   }
 
@@ -95,9 +98,13 @@ export const sets = derived(rankedGames, ($games): SetResult[] => {
   return results;
 });
 
+// ── Derived: clean sets (excludes LRAS/disconnect-tainted sets) ───────────
+
+export const cleanSets = derived(sets, ($sets) => $sets.filter((s) => !s.hasLras));
+
 // ── Derived: header stats ──────────────────────────────────────────────────
 
-export const headerStats = derived([sets, snapshots], ([$sets, $snaps]) => {
+export const headerStats = derived([cleanSets, snapshots], ([$sets, $snaps]) => {
   const totalSets = $sets.length;
   const setWins = $sets.filter((s) => s.result === "win").length;
   const setLosses = totalSets - setWins;
@@ -150,7 +157,7 @@ export interface Session {
   setLosses: number;
 }
 
-export const sessions = derived(sets, ($sets): Session[] => {
+export const sessions = derived(cleanSets, ($sets): Session[] => {
   if ($sets.length === 0) return [];
   const GAP_MS = 2 * 60 * 60 * 1000;
   const result: Session[] = [];
