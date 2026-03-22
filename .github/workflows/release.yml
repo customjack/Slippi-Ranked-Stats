@@ -79,6 +79,7 @@ jobs:
           Write-Host "=== latest.json ==="
           Write-Host $json
 
+          gh release delete $tag --yes 2>$null
           gh release create $tag `
             --title "Slippi Ranked Stats $tag" `
             --notes "Download the installer below to update Slippi Ranked Stats." `
