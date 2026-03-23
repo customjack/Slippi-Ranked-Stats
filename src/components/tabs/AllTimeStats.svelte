@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { sets } from "../../lib/store";
+  import { cleanSets as sets } from "../../lib/store";
   import { STAGES } from "../../lib/parser";
   import BarChart from "../charts/BarChart.svelte";
 

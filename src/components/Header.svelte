@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { headerStats, sets } from "../lib/store";
+  import { headerStats, cleanSets as sets } from "../lib/store";
 
   // Recent form: last N sets
   let formCount = $state(10);

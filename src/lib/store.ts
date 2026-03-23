@@ -100,7 +100,9 @@ export const sets = derived(rankedGames, ($games): SetResult[] => {
 
 // ── Derived: clean sets (excludes LRAS/disconnect-tainted sets) ───────────
 
-export const cleanSets = derived(sets, ($sets) => $sets.filter((s) => !s.hasLras));
+export const cleanSets = derived(sets, ($sets) =>
+  $sets.filter((s) => !s.hasLras && Math.max(s.wins, s.losses) >= 2)
+);
 
 // ── Derived: header stats ──────────────────────────────────────────────────
 

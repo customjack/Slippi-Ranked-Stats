@@ -1,5 +1,21 @@
 # Slippi Ranked Stats — Changelog
 
+## 2026-03-21 — Incomplete set detection (v1.2.2)
+
+### Feature
+Added logic to detect and exclude sets where an opponent disconnected mid-set (LRAS) from all stats analysis.
+
+### Changes (`src/lib/store.ts`)
+- Added `hasLras: boolean` field to `SetResult` interface — `true` if any game in the set ended via disconnect/quit (`lras_win` or `lras_loss`)
+- Added `cleanSets` derived store — filters out all LRAS-tainted sets from `sets`
+- `headerStats` now derives from `cleanSets` instead of `sets` (win rate, streaks, rating delta all exclude incomplete sets)
+- `sessions` now derives from `cleanSets` instead of `sets` (session grouping and per-session stats exclude incomplete sets)
+
+### Why
+When an opponent disconnects before a set is finished, Slippi records it as a win but the result is misleading. Excluding these from analysis gives a cleaner picture of actual performance.
+
+---
+
 ## 2026-03-21 — Auto-updater fixed (v1.2.0)
 
 ### Problem

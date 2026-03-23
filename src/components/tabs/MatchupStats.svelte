@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { rankedGames, sets } from "../../lib/store";
+  import { rankedGames, cleanSets as sets } from "../../lib/store";
   import { CHARACTERS } from "../../lib/parser";
   import BarChart from "../charts/BarChart.svelte";
 
