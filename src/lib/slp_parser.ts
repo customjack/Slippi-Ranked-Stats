@@ -79,7 +79,76 @@ interface StreamResult {
   gameEndMethod: number;
   lrasInitiator: number;
   finalStocks: Record<number, number>;
+  maxPercents: Record<number, number>; // max damage % reached per port
   durationFrames: number;
+  // ordered action state per port: [frameNum, actionState][]
+  actionFrames: Record<number, [number, number][]>;
+}
+
+// ── Action-state helpers (mirrors slippi-js common.ts) ─────────────────────
+
+function isInControl(s: number): boolean {
+  return (s >= 14 && s <= 34)   // grounded control + controlled jump
+      || (s >= 39 && s <= 41)   // squat
+      || (s >= 44 && s <= 64)   // ground attack
+      || s === 0xB0 || s === 0xB1 || s === 0xB2; // special (B-moves)
+}
+
+function isVulnerable(s: number): boolean {
+  return (s >= 0  && s <= 10)   // dying
+      || (s >= 75 && s <= 91)   // damaged
+      || (s >= 183 && s <= 198) // down
+      || (s >= 199 && s <= 204) // teching
+      || (s >= 223 && s <= 232); // grabbed/command-grabbed
+}
+
+/** Compute conversion-based stats from ordered action state frames. */
+function computeConversionStats(
+  playerPort: number,
+  oppPort: number,
+  actionFrames: Record<number, [number, number][]>,
+  maxPercents: Record<number, number>,
+  finalStocks: Record<number, number>
+): { openings_per_kill: number | null; neutral_win_ratio: number | null; damage_per_opening: number | null } {
+  const pFrames = actionFrames[playerPort] ?? [];
+  const oFrames = actionFrames[oppPort] ?? [];
+
+  // Build per-frame lookup for the opponent so we can access both ports by frame
+  const oByFrame = new Map<number, number>();
+  for (const [f, s] of oFrames) oByFrame.set(f, s);
+
+  let neutralWins = 0;   // times we put opponent into vulnerable state from control
+  let neutralLosses = 0; // times opponent put us into vulnerable state from control
+
+  let prevPlayerCtrl = false;
+  let prevOppCtrl = false;
+
+  // Iterate player frames (same frame set as opponent in a 1v1)
+  for (const [frame, playerState] of pFrames) {
+    const oppState = oByFrame.get(frame);
+    if (oppState === undefined) continue;
+
+    const playerCtrl = isInControl(playerState);
+    const oppCtrl    = isInControl(oppState);
+
+    // Opponent transitions: was in control → now vulnerable = we opened them up
+    if (prevOppCtrl && isVulnerable(oppState)) neutralWins++;
+    // Player transitions: was in control → now vulnerable = they opened us up
+    if (prevPlayerCtrl && isVulnerable(playerState)) neutralLosses++;
+
+    prevPlayerCtrl = playerCtrl;
+    prevOppCtrl    = oppCtrl;
+  }
+
+  const kills      = 4 - (finalStocks[oppPort] ?? 0);
+  const totalNeutral = neutralWins + neutralLosses;
+  const dmgDealt   = maxPercents[oppPort] ?? 0;
+
+  return {
+    openings_per_kill:  kills > 0         ? neutralWins / kills         : null,
+    neutral_win_ratio:  totalNeutral > 0  ? neutralWins / totalNeutral  : null,
+    damage_per_opening: neutralWins > 0   ? dmgDealt    / neutralWins   : null,
+  };
 }
 
 function parseEventStream(data: Uint8Array): StreamResult {
@@ -113,6 +182,8 @@ function parseEventStream(data: Uint8Array): StreamResult {
   let gameEndMethod = -1;
   let lrasInitiator = -1;
   const finalStocks: Record<number, number> = {};
+  const maxPercents: Record<number, number> = {};
+  const actionFrames: Record<number, [number, number][]> = {};
   let durationFrames = 0;
 
   while (pos < eventsEnd) {
@@ -138,16 +209,23 @@ function parseEventStream(data: Uint8Array): StreamResult {
       }
 
     } else if (cmd === 0x38) {
-      // POST_FRAME: track last known stocks per port
-      // Offsets within payload: 0=frame_num(i32), 4=port, 5=is_follower, 32=stocks
+      // POST_FRAME
+      // Offsets: 0=frame_num(i32), 4=port, 5=is_follower, 7=action_state(u16),
+      //          21=percent(f32), 32=stocks
       if (size >= 33) {
         const port = data[ps + 4];
         const isFollower = data[ps + 5];
-        const stocks = data[ps + 32];
         if (!isFollower && port <= 3) {
-          finalStocks[port] = stocks;
           const frameNum = view.getInt32(ps, false);
+          const actionState = view.getUint16(ps + 7, false);
+          const stocks = data[ps + 32];
+          const percent = view.getFloat32(ps + 21, false);
+
+          finalStocks[port] = stocks;
           if (frameNum > durationFrames) durationFrames = frameNum;
+          if (percent > (maxPercents[port] ?? 0)) maxPercents[port] = percent;
+          if (!actionFrames[port]) actionFrames[port] = [];
+          actionFrames[port].push([frameNum, actionState]);
         }
       }
 
@@ -162,7 +240,7 @@ function parseEventStream(data: Uint8Array): StreamResult {
     pos += 1 + size;
   }
 
-  return { matchId, stageId, gameEndMethod, lrasInitiator, finalStocks, durationFrames };
+  return { matchId, stageId, gameEndMethod, lrasInitiator, finalStocks, maxPercents, durationFrames, actionFrames };
 }
 
 // ── Metadata parser ────────────────────────────────────────────────────────
@@ -238,6 +316,15 @@ export interface ParsedGameRow {
   result: string;
   duration_frames: number;
   match_id: string;
+  // Live stats — not stored in DB, used for in-session display
+  kills: number;
+  deaths: number;
+  // Advanced stats populated by slippi-js in parser.ts (null until augmented)
+  openings_per_kill: number | null;
+  damage_per_opening: number | null;
+  neutral_win_ratio: number | null;
+  inputs_per_minute: number | null;
+  l_cancel_ratio: number | null;
 }
 
 const METHOD_GAME = 2;
@@ -312,6 +399,13 @@ export function parseSlpBytes(
 
   const filename = filepath.split(/[/\\]/).pop() ?? filepath;
 
+  const kills  = 4 - (stream.finalStocks[oppPort]    ?? 0);
+  const deaths = 4 - (stream.finalStocks[playerPort] ?? 0);
+
+  const convStats = computeConversionStats(
+    playerPort, oppPort, stream.actionFrames, stream.maxPercents, stream.finalStocks
+  );
+
   return [{
     filename,
     filepath,
@@ -325,5 +419,12 @@ export function parseSlpBytes(
     result,
     duration_frames: durationFrames,
     match_id: stream.matchId,
+    kills,
+    deaths,
+    openings_per_kill:  convStats.openings_per_kill,
+    damage_per_opening: convStats.damage_per_opening,
+    neutral_win_ratio:  convStats.neutral_win_ratio,
+    inputs_per_minute:  null, // requires per-frame input data, not tracked yet
+    l_cancel_ratio:     null,
   }];
 }

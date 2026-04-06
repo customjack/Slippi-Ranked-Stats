@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { cleanSets as sets } from "../../lib/store";
+  import { cleanSets as sets, sessions } from "../../lib/store";
   import { STAGES } from "../../lib/parser";
   import BarChart from "../charts/BarChart.svelte";
 
@@ -78,6 +78,22 @@
       }))
       .sort((a, b) => parseInt(a.hour) - parseInt(b.hour));
   })());
+
+  function fmt(min: number): string {
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
+
+  function downloadCSV(data: any[], name: string) {
+    const keys = Object.keys(data[0] ?? {});
+    const rows = [keys.join(","), ...data.map((r) => keys.map((k) => r[k]).join(","))];
+    const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+  }
 </script>
 
 <!-- Summary cards row -->
@@ -153,5 +169,45 @@
       horizontal={true}
       paired={true}
     />
+  </div>
+{/if}
+
+{#if $sessions.length > 0}
+  <div class="section-title" style="margin-top:16px; margin-bottom:8px">
+    Session History
+    <button
+      onclick={() => downloadCSV($sessions.map((s, i) => ({
+        session: i + 1,
+        date: s.start.slice(0, 10),
+        sets: s.sets.length,
+        wins: s.setWins,
+        losses: s.setLosses,
+        win_pct: s.sets.length > 0 ? ((s.setWins / s.sets.length) * 100).toFixed(1) : "0.0",
+        duration: fmt(s.durationMin),
+      })), "session_history.csv")}
+      style="font-size:11px; margin-left:8px; background:var(--card); border:1px solid var(--border); color:var(--muted); padding:2px 8px; border-radius:4px; cursor:pointer"
+    >Export CSV</button>
+  </div>
+  <div class="card" style="padding:0; overflow:hidden; max-height:520px; overflow-y:auto">
+    <table>
+      <thead>
+        <tr><th>#</th><th>Date</th><th>Duration</th><th>Sets</th><th>W</th><th>L</th><th>Win %</th></tr>
+      </thead>
+      <tbody>
+        {#each [...$sessions].reverse() as s, i}
+          <tr>
+            <td class="muted">{$sessions.length - i}</td>
+            <td>{s.start.slice(0, 10)}</td>
+            <td class="muted">{fmt(s.durationMin)}</td>
+            <td>{s.sets.length}</td>
+            <td class="win-text">{s.setWins}</td>
+            <td class="loss-text">{s.setLosses}</td>
+            <td class={s.sets.length > 0 ? (s.setWins / s.sets.length >= 0.5 ? "win-text" : "loss-text") : ""}>
+              {s.sets.length > 0 ? ((s.setWins / s.sets.length) * 100).toFixed(1) + "%" : "—"}
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
   </div>
 {/if}

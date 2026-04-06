@@ -4,7 +4,7 @@
 
   // Recent form: last N sets
   let formCount = $state(10);
-  const FORM_OPTIONS = [5, 10, 25];
+  const FORM_OPTIONS = [5, 10, 25, 50];
 </script>
 
 <div class="card-grid">

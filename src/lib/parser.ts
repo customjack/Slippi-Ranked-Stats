@@ -1,5 +1,5 @@
 import { readFile, readDir } from "@tauri-apps/plugin-fs";
-import { parseSlpBytes } from "./slp_parser";
+import { parseSlpBytes, type ParsedGameRow } from "./slp_parser";
 import { getScannedFilenames, markFilesScanned, insertGame, type GameRow } from "./db";
 import type Database from "@tauri-apps/plugin-sql";
 
@@ -190,7 +190,9 @@ async function collectSlpFiles(dirPath: string): Promise<FileEntry[]> {
 export async function parseSlpFile(
   filepath: string,
   connectCode: string
-): Promise<Omit<GameRow, "id">[]> {
+): Promise<ParsedGameRow[]> {
   const bytes = await readFile(filepath);
   return parseSlpBytes(bytes, filepath, connectCode);
 }
+
+export type { ParsedGameRow };

@@ -71,9 +71,17 @@ async function initSchema(db: Database) {
       global_rank INTEGER,
       regional_rank INTEGER,
       continent TEXT,
+      triggered_by_match_id TEXT,
       UNIQUE(connect_code, timestamp)
     )
   `);
+
+  // Migrate: add triggered_by_match_id to existing DBs
+  try {
+    await db.execute(`ALTER TABLE rating_snapshots ADD COLUMN triggered_by_match_id TEXT`);
+  } catch {
+    // Column already exists — safe to ignore
+  }
 
   await db.execute(`
     CREATE TABLE IF NOT EXISTS season_history (
@@ -163,6 +171,7 @@ export interface SnapshotRow {
   global_rank: number;
   regional_rank: number;
   continent: string;
+  triggered_by_match_id?: string;
 }
 
 export async function insertSnapshot(
@@ -171,8 +180,8 @@ export async function insertSnapshot(
 ): Promise<void> {
   await db.execute(
     `INSERT OR IGNORE INTO rating_snapshots
-      (connect_code, timestamp, rating, wins, losses, global_rank, regional_rank, continent)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      (connect_code, timestamp, rating, wins, losses, global_rank, regional_rank, continent, triggered_by_match_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
     [
       snap.connect_code,
       snap.timestamp,
@@ -182,6 +191,7 @@ export async function insertSnapshot(
       snap.global_rank,
       snap.regional_rank,
       snap.continent,
+      snap.triggered_by_match_id ?? null,
     ]
   );
 }
@@ -258,6 +268,26 @@ export async function clearScannedFiles(): Promise<void> {
 
 export async function clearGames(db: Database): Promise<void> {
   await db.execute(`DELETE FROM games`);
+}
+
+export async function getGamesByMatchId(
+  db: Database,
+  matchId: string
+): Promise<GameRow[]> {
+  return db.select<GameRow[]>(
+    `SELECT * FROM games WHERE match_id = $1 ORDER BY timestamp ASC`,
+    [matchId]
+  );
+}
+
+export async function getGamesVsOpponent(
+  db: Database,
+  opponentCode: string
+): Promise<GameRow[]> {
+  return db.select<GameRow[]>(
+    `SELECT * FROM games WHERE opponent_code = $1 AND match_type = 'ranked' ORDER BY timestamp ASC`,
+    [opponentCode]
+  );
 }
 
 export async function markFilesScanned(filenames: string[]): Promise<void> {

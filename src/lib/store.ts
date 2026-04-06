@@ -13,6 +13,9 @@ function persisted<T>(key: string, initial: T) {
 export const connectCode = persisted<string>("srs_connectCode", "");
 export const replayDir = persisted<string>("srs_replayDir", "");
 export const dateRange = persisted<"30d" | "90d" | "all">("srs_dateRange", "all");
+export const isPremium = persisted<boolean>("srs_isPremium", false);
+export const discordToken = persisted<string | null>("srs_discordToken", null);
+export const discordUsername = persisted<string | null>("srs_discordUsername", null);
 
 // ── Raw data ───────────────────────────────────────────────────────────────
 
@@ -29,6 +32,55 @@ export const isScanning = writable<boolean>(false);
 export const isFetchingSnapshot = writable<boolean>(false);
 export const watcherActive = writable<boolean>(false);
 export const statusMessage = writable<string>("");
+
+// ── Live session state (populated by watcher) ─────────────────────────────
+
+export interface ActiveSet {
+  match_id: string;
+  opponent_code: string;
+  opponent_char_id: number;
+  player_char_id: number;
+  games_won: number;
+  games_lost: number;
+  started_at: string;
+  opponent_rating: number | null;   // fetched from Slippi API, null while loading
+  opponent_tier: string | null;
+  all_time_wins: number;            // set-level record vs this opponent in our DB
+  all_time_losses: number;
+  session_already_faced: boolean;   // did we face them earlier this watcher session?
+}
+
+export const activeSet = writable<ActiveSet | null>(null);
+export const liveSessionStartRating = writable<number | null>(null);
+export const liveSessionStartedAt = writable<string | null>(null); // ISO timestamp of when live session began
+
+export interface LiveGameStats {
+  match_id: string;
+  result: string;
+  kills: number;
+  deaths: number;
+  openings_per_kill: number | null;
+  damage_per_opening: number | null;
+  neutral_win_ratio: number | null;
+  inputs_per_minute: number | null;
+  l_cancel_ratio: number | null;
+  duration_frames: number;
+  stage_id: number;
+  player_char_id: number;
+  opponent_char_id: number;
+  opponent_code: string;
+  timestamp: string;
+}
+
+export const liveGameStats = writable<LiveGameStats[]>([]);
+
+export interface SetResultFlash {
+  result: "win" | "loss";
+  opponent_code: string;
+  wins: number;
+  losses: number;
+}
+export const setResultFlash = writable<SetResultFlash | null>(null);
 
 // ── Derived: filtered games by date range ─────────────────────────────────
 
@@ -162,7 +214,7 @@ export interface Session {
 
 export const sessions = derived(cleanSets, ($sets): Session[] => {
   if ($sets.length === 0) return [];
-  const GAP_MS = 2 * 60 * 60 * 1000;
+  const GAP_MS = 1 * 60 * 60 * 1000;
   const result: Session[] = [];
   let current: SetResult[] = [$sets[0]];
 
