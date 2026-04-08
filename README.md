@@ -63,7 +63,7 @@ Updates are cryptographically signed — the app will only install an update tha
 
 ## Premium
 
-Premium features (live session tracking, rating history) are available to [Patreon supporters](https://www.patreon.com/slippirankedstats).
+Premium features (live session tracking, rating history) are available to [Patreon supporters](https://www.patreon.com/joeydonuts).
 
 After subscribing, join the Discord server (linked on the Patreon page), connect your Patreon account to Discord, then click **Connect Discord** in the app sidebar to verify your role.
 
@@ -73,7 +73,7 @@ After subscribing, join the Discord server (linked on the Patreon page), connect
 
 If you get some use out of this, feel free to support the project on Patreon:
 
-[patreon.com/slippirankedstats](https://www.patreon.com/slippirankedstats)
+[patreon.com/joeydonuts](https://www.patreon.com/joeydonuts)
 
 ---
 
