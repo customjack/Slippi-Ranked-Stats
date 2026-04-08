@@ -45,9 +45,11 @@
         total: v.total,
         pct: (v.wins / v.total) * 100,
       }));
+    // BarChart reverses horizontal data so the first item appears at the top.
+    // Best/Worst sort directions are inverted here so the reversal produces the correct visual order.
     if (oppCharSort === "alpha") rows.sort((a, b) => a.name.localeCompare(b.name));
-    else if (oppCharSort === "best") rows.sort((a, b) => a.pct - b.pct);
-    else rows.sort((a, b) => b.pct - a.pct);
+    else if (oppCharSort === "best") rows.sort((a, b) => b.pct - a.pct);
+    else rows.sort((a, b) => a.pct - b.pct);
     return rows;
   })());
 
