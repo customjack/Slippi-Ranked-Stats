@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { snapshots, seasons, isPremium, sets } from "../../lib/store";
+  import { snapshots, seasons, sets } from "../../lib/store";
   import LineChart from "../charts/LineChart.svelte";
-  import PremiumGate from "../PremiumGate.svelte";
 
   // Convert an ISO timestamp string to a local-time display string "YYYY-MM-DD HH:MM"
   function fmtTs(ts: string): string {
@@ -96,14 +95,7 @@
   })());
 </script>
 
-{#if !$isPremium}
-  <PremiumGate
-    featureName="Rating History"
-    description="Per-set MMR history, rating over time chart, and season breakdown are available to Patreon supporters."
-  />
-
-{:else}
-  <p class="muted" style="font-size:11px; margin-bottom:12px">
+<p class="muted" style="font-size:11px; margin-bottom:12px">
     Rating history only includes sets played while this app was running. Matches played before you started using SRS will not appear here.
   </p>
 
@@ -192,5 +184,3 @@
       </div>
     </div>
   {/if}
-
-{/if}
