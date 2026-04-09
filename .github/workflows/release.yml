@@ -82,6 +82,6 @@ jobs:
           gh release delete $tag --yes 2>$null
           gh release create $tag `
             --title "Slippi Ranked Stats $tag" `
-            --notes "Download the installer below to update Slippi Ranked Stats." `
+            --notes-file release-notes.md `
             "$exePath" `
             latest.json

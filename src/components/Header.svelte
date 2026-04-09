@@ -66,19 +66,19 @@
 
 <!-- Recent Form Dots -->
 <div class="form-dots" style="align-items: center; gap: 6px">
-  <span class="muted" style="font-size:11px; margin-right:4px">Recent:</span>
+  <span class="muted" style="font-size:11px">Recent:</span>
+  <select
+    bind:value={formCount}
+    style="width:50px; flex-shrink:0; font-size:11px; padding:3px 4px; margin-right:4px"
+  >
+    {#each FORM_OPTIONS as n}
+      <option value={n}>{n}</option>
+    {/each}
+  </select>
   {#each $sets.slice(-formCount) as s}
     <div
       class="dot {s.result}"
       title="{s.opponent_code} — {s.wins}-{s.losses}"
     ></div>
   {/each}
-  <select
-    bind:value={formCount}
-    style="width:60px; margin-left:auto; font-size:11px; padding:3px 6px"
-  >
-    {#each FORM_OPTIONS as n}
-      <option value={n}>{n}</option>
-    {/each}
-  </select>
 </div>

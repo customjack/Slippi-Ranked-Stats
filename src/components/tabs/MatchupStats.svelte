@@ -4,6 +4,7 @@
   import BarChart from "../charts/BarChart.svelte";
 
   const MIN_SETS = 1;
+  const MIN_SETS_SPOTLIGHT = 3;
 
   // Character filter — hidden chars are excluded from stats
   let hiddenChars = $state<number[]>([]);
@@ -75,10 +76,7 @@
       .sort((a, b) => b.name.localeCompare(a.name));
   })());
 
-  // Recent sets
-  let recentSets = $derived([...$sets].reverse().slice(0, 50));
-
-  // Opponent history
+  // Opponent history (all sets, sorted by most played)
   let oppHistory = $derived((() => {
     const m = new Map<string, { wins: number; losses: number; sets: number }>();
     for (const s of $sets) {
@@ -92,6 +90,40 @@
       .map(([code, v]) => ({ code, ...v, pct: (v.wins / v.sets) * 100 }))
       .sort((a, b) => b.sets - a.sets);
   })());
+
+  // Opponent spotlight derived stats
+  let mostPlayed = $derived(oppHistory.slice(0, 5));
+  let bestRecord  = $derived(
+    [...oppHistory]
+      .filter((o) => o.sets >= MIN_SETS_SPOTLIGHT)
+      .sort((a, b) => b.pct - a.pct)
+      .slice(0, 5)
+  );
+  let worstRecord = $derived(
+    [...oppHistory]
+      .filter((o) => o.sets >= MIN_SETS_SPOTLIGHT)
+      .sort((a, b) => a.pct - b.pct)
+      .slice(0, 5)
+  );
+
+  // Search state
+  let recentSearch = $state("");
+  let historySearch = $state("");
+
+  // Recent sets — filtered by search
+  let recentSets = $derived(
+    [...$sets]
+      .reverse()
+      .slice(0, 50)
+      .filter((s) => !recentSearch || s.opponent_code.toLowerCase().includes(recentSearch.toLowerCase()))
+  );
+
+  // Opponent history — filtered by search
+  let filteredOppHistory = $derived(
+    historySearch
+      ? oppHistory.filter((o) => o.code.toLowerCase().includes(historySearch.toLowerCase()))
+      : oppHistory
+  );
 
   function downloadCSV(data: any[], name: string) {
     const keys = Object.keys(data[0] ?? {});
@@ -146,7 +178,7 @@
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px">
         <div class="section-title" style="margin-bottom:0">Win % vs Opponent Character</div>
         <div style="display:flex; gap:4px">
-          {#each [["alpha", "A–Z"], ["best", "Best"], ["worst", "Worst"]] as [mode, label]}
+          {#each [["alpha", "A-Z"], ["best", "Best"], ["worst", "Worst"]] as [mode, label]}
             <button
               onclick={() => oppCharSort = mode as SortMode}
               style="
@@ -172,23 +204,86 @@
     </div>
   {/if}
 
-  {#if myCharStats.length > 0}
-    <div class="card">
-      <div class="section-title">Your Character Win %</div>
-      <BarChart
-        categories={myCharStats.map((c) => `${c.name} (${c.total})`)}
-        values={myCharStats.map((c) => c.pct)}
-        label="Win %"
-        horizontal={true}
-        paired={true}
-      />
-    </div>
-  {/if}
+  <!-- Right column: Your Character Win % + Opponent Spotlight -->
+  <div style="display:flex; flex-direction:column; gap:12px">
+    {#if myCharStats.length > 0}
+      <div class="card">
+        <div class="section-title">Your Character Win %</div>
+        <!-- Cap to ~3 bars visible, scroll for more -->
+        <div style="max-height:{3 * 36 + 48}px; overflow-y:auto">
+          <BarChart
+            categories={myCharStats.map((c) => `${c.name} (${c.total})`)}
+            values={myCharStats.map((c) => c.pct)}
+            label="Win %"
+            horizontal={true}
+            paired={true}
+          />
+        </div>
+      </div>
+    {/if}
+
+    <!-- Opponent Spotlight — stacked vertically -->
+    {#if oppHistory.length > 0}
+      <div class="card" style="flex:1">
+        <div class="section-title" style="margin-bottom:10px">Opponent Spotlight</div>
+        <div style="display:flex; flex-direction:column; gap:14px">
+
+          <!-- Most Played -->
+          <div>
+            <div style="font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px">Most Played</div>
+            {#each mostPlayed as o}
+              <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border)">
+                <span style="font-size:13px; font-weight:600">{o.code}</span>
+                <span style="font-size:12px; color:var(--muted)">{o.sets} sets &nbsp;·&nbsp; {o.pct.toFixed(0)}% WR</span>
+              </div>
+            {/each}
+          </div>
+
+          <!-- Best Record -->
+          <div>
+            <div style="font-size:11px; font-weight:700; color:#2ecc71; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px">Best Record</div>
+            {#if bestRecord.length === 0}
+              <div style="font-size:11px; color:var(--muted)">Need {MIN_SETS_SPOTLIGHT}+ sets vs an opponent</div>
+            {:else}
+              {#each bestRecord as o}
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border)">
+                  <span style="font-size:13px; font-weight:600">{o.code}</span>
+                  <span style="font-size:12px; color:#2ecc71">{o.wins}W – {o.losses}L</span>
+                </div>
+              {/each}
+            {/if}
+          </div>
+
+          <!-- Worst Record -->
+          <div>
+            <div style="font-size:11px; font-weight:700; color:#e74c3c; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:6px">Worst Record</div>
+            {#if worstRecord.length === 0}
+              <div style="font-size:11px; color:var(--muted)">Need {MIN_SETS_SPOTLIGHT}+ sets vs an opponent</div>
+            {:else}
+              {#each worstRecord as o}
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border)">
+                  <span style="font-size:13px; font-weight:600">{o.code}</span>
+                  <span style="font-size:12px; color:#e74c3c">{o.wins}W – {o.losses}L</span>
+                </div>
+              {/each}
+            {/if}
+          </div>
+
+        </div>
+      </div>
+    {/if}
+  </div>
 </div>
 
 <!-- Recent Sets table -->
-<div class="section-title" style="margin-bottom:8px">
-  Recent Sets
+<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px">
+  <div class="section-title" style="margin-bottom:0">Recent Sets</div>
+  <input
+    type="text"
+    placeholder="Search by connect code..."
+    bind:value={recentSearch}
+    style="font-size:12px; padding:3px 8px; border-radius:4px; border:1px solid var(--border); background:var(--card); color:var(--text); width:180px"
+  />
   {#if recentSets.length > 0}
     <button
       onclick={() => downloadCSV(recentSets.map((s) => ({
@@ -197,7 +292,7 @@
         result: s.result,
         score: `${s.wins}-${s.losses}`,
       })), "recent_sets.csv")}
-      style="font-size:11px; margin-left:8px; background:var(--card); border:1px solid var(--border); color:var(--muted); padding:2px 8px; border-radius:4px; cursor:pointer"
+      style="font-size:11px; background:var(--card); border:1px solid var(--border); color:var(--muted); padding:2px 8px; border-radius:4px; cursor:pointer"
     >
       Export CSV
     </button>
@@ -228,17 +323,26 @@
           <td>{s.player_char_ids.map((id) => CHARACTERS[id] ?? id).join(", ")}</td>
         </tr>
       {/each}
+      {#if recentSets.length === 0}
+        <tr><td colspan="6" style="text-align:center; color:var(--muted); padding:16px">No results</td></tr>
+      {/if}
     </tbody>
   </table>
 </div>
 
 <!-- Opponent History -->
-<div class="section-title" style="margin-bottom:8px">
-  Opponent History
+<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px">
+  <div class="section-title" style="margin-bottom:0">Opponent History</div>
+  <input
+    type="text"
+    placeholder="Search by connect code..."
+    bind:value={historySearch}
+    style="font-size:12px; padding:3px 8px; border-radius:4px; border:1px solid var(--border); background:var(--card); color:var(--text); width:180px"
+  />
   {#if oppHistory.length > 0}
     <button
       onclick={() => downloadCSV(oppHistory, "opponent_history.csv")}
-      style="font-size:11px; margin-left:8px; background:var(--card); border:1px solid var(--border); color:var(--muted); padding:2px 8px; border-radius:4px; cursor:pointer"
+      style="font-size:11px; background:var(--card); border:1px solid var(--border); color:var(--muted); padding:2px 8px; border-radius:4px; cursor:pointer"
     >
       Export CSV
     </button>
@@ -256,7 +360,7 @@
       </tr>
     </thead>
     <tbody>
-      {#each oppHistory as o}
+      {#each filteredOppHistory as o}
         <tr>
           <td>{o.code}</td>
           <td>{o.sets}</td>
@@ -265,6 +369,9 @@
           <td class={o.pct >= 50 ? "win-text" : "loss-text"}>{o.pct.toFixed(1)}%</td>
         </tr>
       {/each}
+      {#if filteredOppHistory.length === 0}
+        <tr><td colspan="5" style="text-align:center; color:var(--muted); padding:16px">No results</td></tr>
+      {/if}
     </tbody>
   </table>
 </div>

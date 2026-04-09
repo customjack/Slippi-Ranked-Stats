@@ -291,7 +291,7 @@
               Support on Patreon
             </button>
             <div style="font-size:10px; color:var(--muted); margin-top:3px; padding-left:2px; line-height:1.4">
-              Subscribe, then join the Discord server (link on the Patreon page) and
+              Any tier unlocks the Live Session tab. Then join the Discord server (link on the Patreon page) and
               <button
                 onclick={() => openUrl("https://support.patreon.com/hc/en-us/articles/212052266-Getting-Discord-access")}
                 style="background:none; border:none; color:var(--muted); font-size:10px; cursor:pointer; text-decoration:underline; padding:0"

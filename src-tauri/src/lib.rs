@@ -8,6 +8,13 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_deep_link::init())
+        .setup(|app| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_zoom(1.25);
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![wait_for_oauth_callback])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

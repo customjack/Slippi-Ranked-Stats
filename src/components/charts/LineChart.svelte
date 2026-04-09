@@ -21,6 +21,8 @@
     y2Data = undefined as (number | null)[] | undefined,
     label2 = "",
     color2 = "#7c3aed",
+    xAxisLabel = "",
+    yAxisLabel = "",
   }: {
     xData: (string | number)[];
     yData: (number | null)[];
@@ -34,6 +36,8 @@
     y2Data?: (number | null)[];
     label2?: string;
     color2?: string;
+    xAxisLabel?: string;
+    yAxisLabel?: string;
   } = $props();
 
   let container: HTMLDivElement;
@@ -43,7 +47,7 @@
     return {
       backgroundColor: "transparent",
       textStyle: { color: "#888" },
-      grid: { left: 50, right: 20, top: 20, bottom: 40 },
+      grid: { left: 50, right: 20, top: 20, bottom: xAxisLabel ? 56 : 40 },
       tooltip: {
         trigger: "axis",
         backgroundColor: "#2b2b2b",
@@ -64,6 +68,10 @@
         axisLine: { lineStyle: { color: "#3a3a3a" } },
         axisLabel: { color: "#666", fontSize: 11, formatter: (v: string) => v.slice(0, 10) },
         splitLine: { show: false },
+        name: xAxisLabel,
+        nameLocation: "middle",
+        nameGap: 28,
+        nameTextStyle: { color: "#888", fontSize: 11 },
       },
       yAxis: {
         type: "value",
@@ -72,6 +80,10 @@
         axisLine: { lineStyle: { color: "#3a3a3a" } },
         axisLabel: { color: "#666", fontSize: 11, formatter: (v: number) => v.toFixed(1) },
         splitLine: { lineStyle: { color: "#2a2a2a" } },
+        name: yAxisLabel,
+        nameLocation: "middle",
+        nameGap: 40,
+        nameTextStyle: { color: "#888", fontSize: 11 },
       },
       series: [
         {

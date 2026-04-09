@@ -46,7 +46,7 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="white"><path d="M14.82 2.41C11.25 2.41 8.35 5.31 8.35 8.88c0 3.56 2.9 6.46 6.47 6.46 3.56 0 6.46-2.9 6.46-6.46 0-3.57-2.9-6.47-6.46-6.47zM3.19 21.59h2.52V2.41H3.19v19.18z"/></svg>
         Support on Patreon
       </button>
-      <div style="font-size:12px; color:var(--muted); margin: 2px 0">— or, if you're already a patron —</div>
+      <div style="font-size:12px; color:var(--muted); margin: 2px 0">Any tier unlocks access — or, if you're already a patron —</div>
       <button
         onclick={handleConnect}
         disabled={isConnecting}
