@@ -3,49 +3,57 @@
 global_baseline_parser.py — Phase 3 of the Set Grading System.
 
 Streams a massive JSON file (up to 140 GB) of global Slippi match data using
-ijson to avoid loading the entire file into memory. Extracts per-game stats
-grouped by opponent character, computes new percentile distributions, and
-overwrites grade_baselines.json with globally-accurate data.
+ijson to avoid loading the entire file into memory. Extracts per-game stats,
+computes percentile distributions grouped by both player character AND
+opponent character, and overwrites scripts/grade_baselines.json with
+globally-accurate data.
 
-CRITICAL: Do NOT use json.load() on this file — it will cause an OOM crash.
-This script uses ijson for streaming, processing one game record at a time.
+CRITICAL: Do NOT use json.load() on this file — it will OOM. This script
+uses ijson for streaming, processing one game record at a time.
+
+Output schema matches fetch_slippilab_replays.py exactly so the resulting
+grade_baselines.json is a drop-in replacement that grade-benchmarks.ts
+consumes without any code changes.
 
 == Supported JSON formats ==
 
   1. JSON array of objects (most common large dump format):
-       [{"opponent_character": "Falco", "neutral_win_ratio": 0.54, ...}, ...]
+       [{"player_character": "Fox", "opponent_character": "Falco",
+         "neutral_win_ratio": 0.54, ...}, ...]
      → Use: --format array   (uses ijson path 'item')
 
   2. Newline-delimited JSON / NDJSON (one JSON object per line):
-       {"opponent_character": "Falco", "neutral_win_ratio": 0.54, ...}
-       {"opponent_character": "Fox", ...}
+       {"player_character": "Fox", "opponent_character": "Falco", ...}
+       {"player_character": "Marth", ...}
      → Use: --format ndjson
 
-  3. Nested JSON object with a top-level "games" key:
+  3. Nested JSON object with a top-level key holding the array:
        {"games": [...], "metadata": {...}}
-     → Use: --format nested --array-key games   (uses ijson path 'games.item')
+     → Use: --format nested --array-key games   (ijson path 'games.item')
 
-The script will auto-detect NDJSON if the file starts with '{' instead of '['.
+The script auto-detects NDJSON vs array by peeking at the first byte.
 
 == Expected fields per game record ==
-  opponent_character  (string, e.g. "Falco") — REQUIRED for grouping
-  neutral_win_ratio   (float, 0–1)
-  openings_per_kill   (float, typically 1–10)
-  damage_per_opening  (float, typically 5–50)
-  l_cancel_ratio      (float, 0–1)
-  total_damage        (float)
+  player_character    (str)    — character used by the player (for by_player_char grouping)
+  opponent_character  (str)    — opposing character (for by_opponent_char grouping)
+  neutral_win_ratio   (float)  0–1
+  openings_per_kill   (float)  typically 1–10
+  damage_per_opening  (float)  typically 5–60
+  l_cancel_ratio      (float)  0–1
+  avg_kill_percent    (float)  typically 40–200
+  avg_death_percent   (float)  typically 40–200
 
-Missing fields are skipped gracefully; records missing opponent_character go
-into an "_unknown" bucket that is excluded from the final output.
+Field names can be remapped via --player-char-field / --opponent-char-field.
+Records missing a character field go into an "_unknown" bucket and are
+excluded from the final output.
 
-DO NOT EXECUTE THIS SCRIPT until Phase 2 is complete and you have confirmed
-the format of your global JSON file.
+** DO NOT EXECUTE until the global JSON's format is confirmed. **
 
 Usage:
     python global_baseline_parser.py \\
         --input /path/to/global_data.json \\
         --output scripts/grade_baselines.json \\
-        [--format array|ndjson|nested] \\
+        [--format array|ndjson|nested|auto] \\
         [--array-key games] \\
         [--progress-every 100000]
 """
@@ -67,59 +75,57 @@ except ImportError:
 
 # ── Constants ──────────────────────────────────────────────────────────────
 
+# Must match STAT_KEYS in fetch_slippilab_replays.py so the two pipelines
+# produce drop-in compatible output.
 STAT_KEYS = [
     "neutral_win_ratio",
     "openings_per_kill",
     "damage_per_opening",
     "l_cancel_ratio",
-    "total_damage",
+    "avg_kill_percent",
+    "avg_death_percent",
 ]
 
 # ── Percentile helpers ─────────────────────────────────────────────────────
 
-def compute_percentiles(values: list[float]) -> dict:
+def compute_percentiles(values: list) -> dict:
     """Return avg + P5/P10/P25/P50/P75/P90/P95 for a list of floats.
 
-    Both tails are computed so that inverted stats (lower = better) can be
-    graded correctly using the low-end percentiles.
+    Both tails are computed so that inverted stats (openings_per_kill,
+    avg_kill_percent) can be graded against their low-end percentiles.
     """
     if not values:
-        return {
-            "sample_size": 0,
-            "avg": None,
-            "p5": None, "p10": None, "p25": None,
-            "p50": None,
-            "p75": None, "p90": None, "p95": None,
-        }
+        return {"sample_size": 0, "avg": None,
+                "p5": None, "p10": None, "p25": None, "p50": None,
+                "p75": None, "p90": None, "p95": None}
     arr = np.array(values, dtype=float)
     pcts = np.percentile(arr, [5, 10, 25, 50, 75, 90, 95])
     return {
         "sample_size": len(values),
-        "avg":  round(float(np.mean(arr)),  4),
-        "p5":   round(float(pcts[0]),       4),
-        "p10":  round(float(pcts[1]),       4),
-        "p25":  round(float(pcts[2]),       4),
-        "p50":  round(float(pcts[3]),       4),
-        "p75":  round(float(pcts[4]),       4),
-        "p90":  round(float(pcts[5]),       4),
-        "p95":  round(float(pcts[6]),       4),
+        "avg":  round(float(np.mean(arr)), 4),
+        "p5":   round(float(pcts[0]),      4),
+        "p10":  round(float(pcts[1]),      4),
+        "p25":  round(float(pcts[2]),      4),
+        "p50":  round(float(pcts[3]),      4),
+        "p75":  round(float(pcts[4]),      4),
+        "p90":  round(float(pcts[5]),      4),
+        "p95":  round(float(pcts[6]),      4),
     }
 
 # ── Streaming helpers ──────────────────────────────────────────────────────
 
 def stream_array(f, array_key=None):
     """
-    Stream game records from a JSON array using ijson.
+    Stream records from a JSON array using ijson (constant memory).
     array_key=None  → root-level array (ijson path 'item')
     array_key='foo' → nested array at obj['foo'] (ijson path 'foo.item')
     """
     path = f"{array_key}.item" if array_key else "item"
-    for record in ijson.items(f, path):
-        yield record
+    yield from ijson.items(f, path)
 
 
 def stream_ndjson(f):
-    """Stream game records from a newline-delimited JSON file."""
+    """Stream records from a newline-delimited JSON file."""
     for line in f:
         line = line.strip()
         if not line:
@@ -131,15 +137,18 @@ def stream_ndjson(f):
 
 
 def detect_format(input_path: str) -> str:
-    """Peek at the first byte to guess JSON format."""
+    """Peek at the first non-whitespace byte to guess JSON format."""
     with open(input_path, "rb") as f:
-        first = f.read(1)
-    if first == b"[":
+        # Skip leading whitespace
+        while True:
+            b = f.read(1)
+            if not b or b not in b" \t\r\n":
+                break
+    if b == b"[":
         return "array"
-    elif first == b"{":
+    if b == b"{":
         return "ndjson"
-    else:
-        return "array"  # default guess
+    return "array"  # default
 
 # ── Validation ─────────────────────────────────────────────────────────────
 
@@ -153,7 +162,9 @@ def is_valid_value(key: str, val) -> bool:
         return 0.0 <= val <= 1.0
     if key == "openings_per_kill":
         return 0.0 < val < 100.0
-    if key in ("damage_per_opening", "total_damage"):
+    if key == "damage_per_opening":
+        return 0.0 < val < 1000.0
+    if key in ("avg_kill_percent", "avg_death_percent"):
         return 0.0 < val < 1000.0
     return True
 
@@ -168,13 +179,15 @@ def main():
     parser.add_argument("--output", default=os.path.join(os.path.dirname(__file__), "grade_baselines.json"),
                         help="Output path (default: scripts/grade_baselines.json)")
     parser.add_argument("--format", choices=["array", "ndjson", "nested", "auto"], default="auto",
-                        help="JSON format: array (default), ndjson, nested, or auto-detect")
+                        help="JSON format (default: auto-detect)")
     parser.add_argument("--array-key", default=None,
-                        help="For --format nested: the key containing the games array (e.g. 'games')")
+                        help="For --format nested: the key holding the games array (e.g. 'games')")
     parser.add_argument("--progress-every", type=int, default=100_000,
                         help="Print a progress line every N records (default: 100000)")
-    parser.add_argument("--char-field", default="opponent_character",
-                        help="JSON field name for opponent character (default: 'opponent_character')")
+    parser.add_argument("--player-char-field", default="player_character",
+                        help="JSON field for player character (default: 'player_character')")
+    parser.add_argument("--opponent-char-field", default="opponent_character",
+                        help="JSON field for opponent character (default: 'opponent_character')")
     args = parser.parse_args()
 
     input_path = os.path.expanduser(args.input)
@@ -186,87 +199,111 @@ def main():
     print(f"Input file: {input_path}")
     print(f"File size:  {file_size_gb:.1f} GB")
 
-    # Auto-detect format
     fmt = args.format
     if fmt == "auto":
         fmt = detect_format(input_path)
         print(f"Auto-detected format: {fmt}")
 
-    # Accumulators
-    by_char: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
-    overall: dict[str, list[float]] = defaultdict(list)
+    # Dual grouping — same structure as fetch_slippilab_replays.py.
+    by_player_char:   dict = defaultdict(lambda: defaultdict(list))
+    by_opponent_char: dict = defaultdict(lambda: defaultdict(list))
+    overall:          dict = defaultdict(list)
+
     total_records = 0
-    skipped = 0
+    skipped       = 0
 
     print(f"\nStreaming records (progress every {args.progress_every:,})...")
 
-    with open(input_path, "rb") as f:
-        if fmt == "ndjson":
-            # py-slippi uses text mode for NDJSON; re-open in text mode
-            f.close()
-            f = open(input_path, "r", encoding="utf-8", errors="replace")
-            records = stream_ndjson(f)
-        elif fmt == "nested":
-            records = stream_array(f, array_key=args.array_key)
-        else:  # array
-            records = stream_array(f, array_key=None)
+    # ijson wants binary for array/nested; NDJSON reads text.
+    if fmt == "ndjson":
+        f = open(input_path, "r", encoding="utf-8", errors="replace")
+        records = stream_ndjson(f)
+    elif fmt == "nested":
+        f = open(input_path, "rb")
+        records = stream_array(f, array_key=args.array_key)
+    else:  # array
+        f = open(input_path, "rb")
+        records = stream_array(f, array_key=None)
 
+    try:
         for record in records:
             total_records += 1
 
             if total_records % args.progress_every == 0:
-                print(f"  Processed {total_records:>10,} records | "
+                print(f"  Processed {total_records:>12,} | "
                       f"Skipped: {skipped:,} | "
-                      f"Characters: {len(by_char)}")
+                      f"Players: {len(by_player_char)}  Opponents: {len(by_opponent_char)}",
+                      flush=True)
 
-            char_name = record.get(args.char_field)
-            if not char_name or not isinstance(char_name, str):
+            player_char = record.get(args.player_char_field)
+            opp_char    = record.get(args.opponent_char_field)
+
+            # At least one grouping field must be present and be a non-empty string.
+            if not isinstance(player_char, str) or not player_char:
+                player_char = None
+            if not isinstance(opp_char, str) or not opp_char:
+                opp_char = None
+            if player_char is None and opp_char is None:
                 skipped += 1
                 continue
 
             added_any = False
             for key in STAT_KEYS:
                 val = record.get(key)
-                if val is not None and is_valid_value(key, val):
-                    by_char[char_name][key].append(float(val))
-                    overall[key].append(float(val))
-                    added_any = True
+                if val is None or not is_valid_value(key, val):
+                    continue
+                if player_char is not None:
+                    by_player_char[player_char][key].append(float(val))
+                if opp_char is not None:
+                    by_opponent_char[opp_char][key].append(float(val))
+                overall[key].append(float(val))
+                added_any = True
 
             if not added_any:
                 skipped += 1
+    finally:
+        f.close()
 
+    valid = total_records - skipped
     print(f"\nStreaming complete.")
-    print(f"  Total records read:  {total_records:,}")
-    print(f"  Skipped (no data):   {skipped:,}")
-    print(f"  Valid records:       {total_records - skipped:,}")
-    print(f"  Unique characters:   {len(by_char)}")
+    print(f"  Total records:     {total_records:,}")
+    print(f"  Skipped:           {skipped:,}")
+    print(f"  Valid records:     {valid:,}")
+    print(f"  Player chars:      {len(by_player_char)}")
+    print(f"  Opponent chars:    {len(by_opponent_char)}")
 
-    # Build output
-    output = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "source": "global",
-        "sample_size": total_records - skipped,
-        "by_character": {},
-    }
+    def build_char_section(accum: dict) -> dict:
+        section = {}
+        for char_name in sorted(accum.keys()):
+            char_data = accum[char_name]
+            n = max((len(char_data[k]) for k in STAT_KEYS if char_data[k]), default=0)
+            section[char_name] = {"sample_size": n}
+            for key in STAT_KEYS:
+                section[char_name][key] = compute_percentiles(char_data[key])
+        return section
 
-    for char_name in sorted(by_char.keys()):
-        char_data = by_char[char_name]
-        n = max((len(char_data[k]) for k in STAT_KEYS if char_data[k]), default=0)
-        output["by_character"][char_name] = {"sample_size": n}
-        for key in STAT_KEYS:
-            output["by_character"][char_name][key] = compute_percentiles(char_data[key])
-
-    # Overall fallback
-    overall_n = total_records - skipped
-    output["by_character"]["_overall"] = {"sample_size": overall_n}
+    overall_entry = {"sample_size": valid}
     for key in STAT_KEYS:
-        output["by_character"]["_overall"][key] = compute_percentiles(overall[key])
+        overall_entry[key] = compute_percentiles(overall[key])
+
+    output = {
+        "generated_at":     datetime.now(timezone.utc).isoformat(),
+        "source":           "global",
+        "replay_count":     valid,
+        "by_player_char":   build_char_section(by_player_char),
+        "by_opponent_char": build_char_section(by_opponent_char),
+    }
+    output["by_player_char"]["_overall"]   = overall_entry
+    output["by_opponent_char"]["_overall"] = overall_entry
 
     with open(args.output, "w", encoding="utf-8") as f_out:
         json.dump(output, f_out, indent=2)
 
+    player_chars   = sorted(k for k in output["by_player_char"]   if k != "_overall")
+    opponent_chars = sorted(k for k in output["by_opponent_char"] if k != "_overall")
     print(f"\nBaselines written to: {args.output}")
-    print(f"Characters in output: {sorted(k for k in output['by_character'] if k != '_overall')}")
+    print(f"Player chars  ({len(player_chars)}):   {player_chars}")
+    print(f"Opponent chars ({len(opponent_chars)}): {opponent_chars}")
 
 
 if __name__ == "__main__":

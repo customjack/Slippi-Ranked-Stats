@@ -79,7 +79,10 @@ interface StreamResult {
   gameEndMethod: number;
   lrasInitiator: number;
   finalStocks: Record<number, number>;
-  maxPercents: Record<number, number>; // max damage % reached per port
+  // Total damage dealt TO each port, summed across stocks. Counts the peak
+  // percent each life since percent resets on respawn. Replaces the old
+  // "peak of final stock only" approach which undercounted across a full game.
+  totalDamageTaken: Record<number, number>;
   durationFrames: number;
   // ordered action state per port: [frameNum, actionState][]
   actionFrames: Record<number, [number, number][]>;
@@ -114,7 +117,7 @@ function computeConversionStats(
   playerPort: number,
   oppPort: number,
   actionFrames: Record<number, [number, number][]>,
-  maxPercents: Record<number, number>,
+  totalDamageTaken: Record<number, number>,
   finalStocks: Record<number, number>
 ): { openings_per_kill: number | null; neutral_win_ratio: number | null; damage_per_opening: number | null } {
   const pFrames = actionFrames[playerPort] ?? [];
@@ -149,7 +152,7 @@ function computeConversionStats(
 
   const kills      = 4 - (finalStocks[oppPort] ?? 0);
   const totalNeutral = neutralWins + neutralLosses;
-  const dmgDealt   = maxPercents[oppPort] ?? 0;
+  const dmgDealt   = totalDamageTaken[oppPort] ?? 0;
 
   return {
     openings_per_kill:  kills > 0         ? neutralWins / kills         : null,
@@ -189,7 +192,10 @@ function parseEventStream(data: Uint8Array): StreamResult {
   let gameEndMethod = -1;
   let lrasInitiator = -1;
   const finalStocks: Record<number, number> = {};
-  const maxPercents: Record<number, number> = {};
+  // Sum of peak damage reached on each stock before loss — matches the Python
+  // baseline pipeline's total-damage-dealt accumulator.
+  const totalDamageTaken: Record<number, number> = {};
+  const damageThisStock: Record<number, number> = {};
   const actionFrames: Record<number, [number, number][]> = {};
   const lCancelSuccesses: Record<number, number> = {};
   const lCancelAttempts: Record<number, number> = {};
@@ -237,7 +243,6 @@ function parseEventStream(data: Uint8Array): StreamResult {
 
           finalStocks[port] = stocks;
           if (frameNum > durationFrames) durationFrames = frameNum;
-          if (percent > (maxPercents[port] ?? 0)) maxPercents[port] = percent;
           if (!actionFrames[port]) actionFrames[port] = [];
           actionFrames[port].push([frameNum, actionState]);
 
@@ -251,10 +256,15 @@ function parseEventStream(data: Uint8Array): StreamResult {
             }
           }
 
-          // Stock transition: record percent at the frame before a stock was lost
+          // Stock transition: record percent at the frame before a stock was lost,
+          // and bank the peak damage this life into the per-port total.
           if (prevStocksTrack[port] !== undefined && stocks < prevStocksTrack[port]) {
             if (!stockPercents[port]) stockPercents[port] = [];
             stockPercents[port].push(prevPercentsTrack[port] ?? percent);
+            totalDamageTaken[port] = (totalDamageTaken[port] ?? 0) + (damageThisStock[port] ?? 0);
+            damageThisStock[port] = 0;
+          } else {
+            damageThisStock[port] = percent;
           }
           prevStocksTrack[port] = stocks;
           prevPercentsTrack[port] = percent;
@@ -287,7 +297,13 @@ function parseEventStream(data: Uint8Array): StreamResult {
     pos += 1 + size;
   }
 
-  return { matchId, stageId, gameEndMethod, lrasInitiator, finalStocks, maxPercents, durationFrames, actionFrames, lCancelSuccesses, lCancelAttempts, stockPercents, inputCounts };
+  // Bank any residual damage on the stock the port was still alive on when the
+  // game ended (timeout / LRAS on a fresh stock yields 0, which is a no-op).
+  for (const port of Object.keys(damageThisStock).map(Number)) {
+    totalDamageTaken[port] = (totalDamageTaken[port] ?? 0) + (damageThisStock[port] ?? 0);
+  }
+
+  return { matchId, stageId, gameEndMethod, lrasInitiator, finalStocks, totalDamageTaken, durationFrames, actionFrames, lCancelSuccesses, lCancelAttempts, stockPercents, inputCounts };
 }
 
 // ── Metadata parser ────────────────────────────────────────────────────────
@@ -452,7 +468,7 @@ export function parseSlpBytes(
   const deaths = 4 - (stream.finalStocks[playerPort] ?? 0);
 
   const convStats = computeConversionStats(
-    playerPort, oppPort, stream.actionFrames, stream.maxPercents, stream.finalStocks
+    playerPort, oppPort, stream.actionFrames, stream.totalDamageTaken, stream.finalStocks
   );
 
   return [{

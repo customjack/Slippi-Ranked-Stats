@@ -76,25 +76,27 @@ STAT_KEYS = [
     "avg_death_percent",
 ]
 
-# ── Action-state helpers (ported from slp_parser.ts) ──────────────────────────
+# ── Action-state helpers (mirrors slippi-js common.ts / slp_parser.ts) ────────
+# The previous ranges here diverged from the authoritative slippi-js source and
+# caused severe miscounting (e.g. states 0–10 are DYING, not control). The
+# ranges below match src/lib/slp_parser.ts exactly so baseline stats stay
+# consistent with the values the live app computes.
 
 def is_in_control(state: int) -> bool:
     return (
-        (0   <= state <= 17) or
-        (20  <= state <= 24) or
-        state in (26, 27)    or
-        (45  <= state <= 51)
+        (14 <= state <= 24) or   # grounded control + controlled jump
+        (39 <= state <= 41) or   # squat
+        (45 <= state <= 64) or   # ground attack
+        state == 212             # grab
     )
 
 def is_vulnerable(state: int) -> bool:
     return (
-        (70  <= state <= 104) or
-        (105 <= state <= 107) or
-        (108 <= state <= 112) or
-        (155 <= state <= 162) or
-        (183 <= state <= 198) or
-        (199 <= state <= 204) or
-        (223 <= state <= 232)
+        (0   <= state <= 10)  or   # dying
+        (75  <= state <= 91)  or   # damaged
+        (183 <= state <= 198) or   # down
+        (199 <= state <= 204) or   # teching
+        (223 <= state <= 232)      # grabbed
     )
 
 # ── Stat computation ───────────────────────────────────────────────────────────
