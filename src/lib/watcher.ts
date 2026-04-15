@@ -203,6 +203,8 @@ async function processSlpFile(
               neutral_win_ratio: g.neutral_win_ratio,
               inputs_per_minute: g.inputs_per_minute,
               l_cancel_ratio: g.l_cancel_ratio,
+              avg_kill_percent: g.avg_kill_percent,
+              avg_death_percent: g.avg_death_percent,
               duration_frames: g.duration_frames,
               stage_id: g.stage_id,
               player_char_id: g.player_char_id,
@@ -306,10 +308,11 @@ async function handleRankedGame(
 
     if (import.meta.env.DEV) {
       const setStats = get(liveGameStats).filter((s) => s.match_id === g.match_id);
+      const playerChar   = CHARACTERS[g.player_char_id]   ?? "Unknown";
       const opponentChar = CHARACTERS[g.opponent_char_id] ?? "Unknown";
       const setResult = wins > losses ? "win" : "loss";
       try {
-        const grade = gradeSet(setStats, opponentChar, setResult, wins, losses);
+        const grade = gradeSet(setStats, playerChar, opponentChar, setResult, wins, losses);
         lastSetGrade.set(grade);
       } catch {
         lastSetGrade.set(null);

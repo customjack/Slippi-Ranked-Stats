@@ -3,9 +3,16 @@
  *
  * !! DEV ONLY — not shipped to users yet !!
  *
- * Takes a completed set's LiveGameStats, averages each stat across all games,
- * compares against character-specific (or overall) percentile benchmarks,
- * and returns a letter grade S → F with a per-stat breakdown.
+ * Grades a completed set across four equally-weighted categories:
+ *   Neutral   (neutral_win_ratio, openings_per_kill)
+ *   Punish    (damage_per_opening, avg_kill_percent)
+ *   Defense   (avg_death_percent)
+ *   Execution (l_cancel_ratio, inputs_per_minute)
+ *
+ * Each stat is scored 0–100 via percentile interpolation against
+ * character-specific benchmarks (by_player_char). Category score =
+ * equal-weight average of its non-null stats. Overall score = equal-weight
+ * average of the four category scores.
  */
 
 import type { LiveGameStats } from "./store";
@@ -14,26 +21,38 @@ import { BENCHMARKS, type StatThresholds } from "./grade-benchmarks";
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export type GradeLetter = "S" | "A" | "B" | "C" | "D" | "F";
+export type CategoryKey  = "neutral" | "punish" | "defense" | "execution";
 
 export interface StatGrade {
-  value:  number | null;
-  score:  number | null;   // 0–100 performance score
-  grade:  GradeLetter | null;
-  label:  string;          // human-readable stat name
-  formatted: string;       // display-ready value string
+  value:     number | null;
+  score:     number | null;   // 0–100 performance score
+  grade:     GradeLetter | null;
+  label:     string;
+  formatted: string;
+}
+
+export interface CategoryGrade {
+  label:  string;
+  letter: GradeLetter | null;
+  score:  number | null;
 }
 
 export interface SetGrade {
-  letter:         GradeLetter;
-  score:          number;           // 0–100 weighted composite
+  letter:     GradeLetter;
+  score:      number;           // 0–100 weighted composite
+  categories: Record<CategoryKey, CategoryGrade>;
   breakdown: {
     neutral_win_ratio:  StatGrade;
     openings_per_kill:  StatGrade;
     damage_per_opening: StatGrade;
+    avg_kill_percent:   StatGrade;
+    avg_death_percent:  StatGrade;
     l_cancel_ratio:     StatGrade;
+    inputs_per_minute:  StatGrade;
   };
+  playerChar:     string;
   opponentChar:   string;
-  baselineSource: "character" | "overall"; // which benchmarks were used
+  baselineSource: "character" | "overall";
   setResult:      "win" | "loss";
   wins:           number;
   losses:         number;
@@ -41,32 +60,29 @@ export interface SetGrade {
 
 // ── Stat configuration ─────────────────────────────────────────────────────
 
-/** Stats where LOWER raw value = BETTER performance. Use low-end percentiles for grading. */
-const INVERTED_STATS = new Set(["openings_per_kill"]);
+/** Stats where LOWER raw value = BETTER performance. */
+const INVERTED_STATS = new Set(["openings_per_kill", "avg_kill_percent"]);
 
-/** Contribution to the overall weighted score. Must sum to 1.0 across non-null stats. */
-const WEIGHTS: Record<string, number> = {
-  neutral_win_ratio:  0.40,
-  openings_per_kill:  0.30,
-  damage_per_opening: 0.20,
-  l_cancel_ratio:     0.10,
+/** Category definitions — stats listed in display order within each category. */
+const CATEGORY_DEFS: Record<CategoryKey, { label: string; stats: (keyof SetGrade["breakdown"])[] }> = {
+  neutral:   { label: "Neutral",   stats: ["neutral_win_ratio",  "openings_per_kill"]  },
+  punish:    { label: "Punish",    stats: ["damage_per_opening", "avg_kill_percent"]   },
+  defense:   { label: "Defense",   stats: ["avg_death_percent"]                        },
+  execution: { label: "Execution", stats: ["l_cancel_ratio",     "inputs_per_minute"]  },
 };
 
 const STAT_LABELS: Record<string, string> = {
   neutral_win_ratio:  "Neutral Win Rate",
   openings_per_kill:  "Openings / Kill",
   damage_per_opening: "Damage / Opening",
+  avg_kill_percent:   "Avg Kill %",
+  avg_death_percent:  "Avg Death %",
   l_cancel_ratio:     "L-Cancel %",
+  inputs_per_minute:  "Inputs / Min",
 };
 
 // ── Percentile scoring ─────────────────────────────────────────────────────
 
-/**
- * Map a raw stat value to a 0–100 performance score.
- *
- * For normal stats (higher = better): uses p25/p50/p75/p90/p95 as grade boundaries.
- * For inverted stats (lower = better): uses p5/p10/p25/p50/p75 as grade boundaries.
- */
 function percentileScore(value: number, t: StatThresholds, inverted: boolean): number {
   let score: number;
 
@@ -78,8 +94,7 @@ function percentileScore(value: number, t: StatThresholds, inverted: boolean): n
     else if (value >= t.p25) score = 25 + (value - t.p25) / Math.max(t.p50 - t.p25, 0.001) * 25;
     else                     score = Math.max(0, (value / Math.max(t.p25, 0.001)) * 25);
   } else {
-    // Lower value = better: p5 = elite threshold, p75 = poor
-    if      (value <= t.p5)  score = 95 + Math.min((t.p5 - value) / Math.max(t.p5, 0.001) * 5, 5);
+    if      (value <= t.p5)  score = 95 + Math.min((t.p5  - value) / Math.max(t.p5,        0.001) * 5, 5);
     else if (value <= t.p10) score = 90 + (t.p10 - value) / Math.max(t.p10 - t.p5,  0.001) * 5;
     else if (value <= t.p25) score = 75 + (t.p25 - value) / Math.max(t.p25 - t.p10, 0.001) * 15;
     else if (value <= t.p50) score = 50 + (t.p50 - value) / Math.max(t.p50 - t.p25, 0.001) * 25;
@@ -104,24 +119,27 @@ function formatStatValue(key: string, value: number | null): string {
   if (key === "neutral_win_ratio" || key === "l_cancel_ratio") return (value * 100).toFixed(0) + "%";
   if (key === "damage_per_opening") return value.toFixed(1);
   if (key === "openings_per_kill")  return value.toFixed(2);
+  if (key === "avg_kill_percent" || key === "avg_death_percent") return value.toFixed(0) + "%";
+  if (key === "inputs_per_minute")  return Math.round(value).toString();
   return value.toFixed(2);
 }
 
 // ── Average stats across set games ────────────────────────────────────────
 
 function averageSetStats(games: LiveGameStats[]): Record<string, number | null> {
+  const allKeys = Object.keys(STAT_LABELS);
   const accum: Record<string, number[]> = {};
-  for (const key of Object.keys(WEIGHTS)) accum[key] = [];
+  for (const key of allKeys) accum[key] = [];
 
   for (const g of games) {
-    for (const key of Object.keys(WEIGHTS)) {
+    for (const key of allKeys) {
       const val = (g as Record<string, unknown>)[key] as number | null;
       if (val !== null && val !== undefined && isFinite(val)) accum[key].push(val);
     }
   }
 
   const result: Record<string, number | null> = {};
-  for (const key of Object.keys(WEIGHTS)) {
+  for (const key of allKeys) {
     const vals = accum[key];
     result[key] = vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
   }
@@ -133,33 +151,34 @@ function averageSetStats(games: LiveGameStats[]): Record<string, number | null> 
 /**
  * Grade a completed set.
  *
- * @param games       All LiveGameStats entries for this set's match_id
- * @param opponentChar  Opponent character name (e.g. "Falco"), used for character-specific benchmarks
- * @param setResult   Whether the player won or lost the set
- * @param wins        Number of games won
- * @param losses      Number of games lost
+ * @param games        All LiveGameStats entries for this set's match_id
+ * @param playerChar   Player's character name (used for character-specific benchmarks)
+ * @param opponentChar Opponent's character name (stored for display)
+ * @param setResult    Whether the player won or lost the set
+ * @param wins         Number of games won
+ * @param losses       Number of games lost
  */
 export function gradeSet(
   games: LiveGameStats[],
+  playerChar: string,
   opponentChar: string,
   setResult: "win" | "loss",
   wins: number,
-  losses: number
+  losses: number,
 ): SetGrade {
-  const charBenchmarks = BENCHMARKS[opponentChar] ?? BENCHMARKS["_overall"];
-  const baselineSource: "character" | "overall" = BENCHMARKS[opponentChar] ? "character" : "overall";
+  // Look up benchmarks by player character; fall back to _overall
+  const benchmarks    = BENCHMARKS[playerChar] ?? BENCHMARKS["_overall"];
+  const baselineSource: "character" | "overall" = BENCHMARKS[playerChar] ? "character" : "overall";
 
   const averaged = averageSetStats(games);
 
-  let weightedScore = 0;
-  let totalWeight   = 0;
-  const breakdown: SetGrade["breakdown"] = {} as SetGrade["breakdown"];
+  // ── Score each stat ──────────────────────────────────────────────────────
+  const breakdown = {} as SetGrade["breakdown"];
 
-  for (const key of Object.keys(WEIGHTS) as (keyof typeof WEIGHTS)[]) {
-    const value     = averaged[key] ?? null;
-    const weight    = WEIGHTS[key];
-    const thresholds = (charBenchmarks as Record<string, StatThresholds>)[key];
-    const inverted  = INVERTED_STATS.has(key);
+  for (const key of Object.keys(STAT_LABELS) as (keyof SetGrade["breakdown"])[]) {
+    const value      = averaged[key] ?? null;
+    const thresholds = (benchmarks as Record<string, StatThresholds>)[key];
+    const inverted   = INVERTED_STATS.has(key);
 
     let score: number | null = null;
     let grade: GradeLetter | null = null;
@@ -167,11 +186,9 @@ export function gradeSet(
     if (value !== null && thresholds) {
       score = percentileScore(value, thresholds, inverted);
       grade = scoreToGrade(score);
-      weightedScore += score * weight;
-      totalWeight   += weight;
     }
 
-    (breakdown as Record<string, StatGrade>)[key] = {
+    breakdown[key] = {
       value,
       score,
       grade,
@@ -180,12 +197,37 @@ export function gradeSet(
     };
   }
 
-  const overallScore = totalWeight > 0 ? weightedScore / totalWeight : 0;
+  // ── Score each category (equal weight among non-null stats) ──────────────
+  const categories = {} as SetGrade["categories"];
+
+  for (const [catKey, def] of Object.entries(CATEGORY_DEFS) as [CategoryKey, typeof CATEGORY_DEFS[CategoryKey]][]) {
+    const scores = def.stats
+      .map((s) => breakdown[s].score)
+      .filter((s): s is number => s !== null);
+
+    if (scores.length === 0) {
+      categories[catKey] = { label: def.label, letter: null, score: null };
+    } else {
+      const catScore = scores.reduce((a, b) => a + b, 0) / scores.length;
+      categories[catKey] = { label: def.label, letter: scoreToGrade(catScore), score: Math.round(catScore * 10) / 10 };
+    }
+  }
+
+  // ── Overall score (equal weight across non-null categories) ──────────────
+  const catScores = Object.values(categories)
+    .map((c) => c.score)
+    .filter((s): s is number => s !== null);
+
+  const overallScore = catScores.length > 0
+    ? catScores.reduce((a, b) => a + b, 0) / catScores.length
+    : 0;
 
   return {
-    letter:         scoreToGrade(overallScore),
-    score:          Math.round(overallScore * 10) / 10,
+    letter:     scoreToGrade(overallScore),
+    score:      Math.round(overallScore * 10) / 10,
+    categories,
     breakdown,
+    playerChar,
     opponentChar,
     baselineSource,
     setResult,

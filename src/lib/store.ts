@@ -65,6 +65,8 @@ export interface LiveGameStats {
   neutral_win_ratio: number | null;
   inputs_per_minute: number | null;
   l_cancel_ratio: number | null;
+  avg_kill_percent: number | null;
+  avg_death_percent: number | null;
   duration_frames: number;
   stage_id: number;
   player_char_id: number;

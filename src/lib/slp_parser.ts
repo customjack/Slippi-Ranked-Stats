@@ -86,6 +86,10 @@ interface StreamResult {
   // L-cancel tracking (replay spec v2.1.0+): byte 35 of post-frame payload
   lCancelSuccesses: Record<number, number>;
   lCancelAttempts: Record<number, number>;
+  // Per-port percent at each stock loss (for avg kill/death percent)
+  stockPercents: Record<number, number[]>;
+  // Total button-state changes per port (for inputs/min)
+  inputCounts: Record<number, number>;
 }
 
 // ── Action-state helpers (mirrors slippi-js common.ts) ─────────────────────
@@ -189,6 +193,11 @@ function parseEventStream(data: Uint8Array): StreamResult {
   const actionFrames: Record<number, [number, number][]> = {};
   const lCancelSuccesses: Record<number, number> = {};
   const lCancelAttempts: Record<number, number> = {};
+  const stockPercents: Record<number, number[]> = {};
+  const prevStocksTrack: Record<number, number> = {};
+  const prevPercentsTrack: Record<number, number> = {};
+  const inputCounts: Record<number, number> = {};
+  const prevButtons: Record<number, number> = {};
   let durationFrames = 0;
 
   while (pos < eventsEnd) {
@@ -241,6 +250,29 @@ function parseEventStream(data: Uint8Array): StreamResult {
               if (lcStatus === 1) lCancelSuccesses[port] = (lCancelSuccesses[port] ?? 0) + 1;
             }
           }
+
+          // Stock transition: record percent at the frame before a stock was lost
+          if (prevStocksTrack[port] !== undefined && stocks < prevStocksTrack[port]) {
+            if (!stockPercents[port]) stockPercents[port] = [];
+            stockPercents[port].push(prevPercentsTrack[port] ?? percent);
+          }
+          prevStocksTrack[port] = stocks;
+          prevPercentsTrack[port] = percent;
+        }
+      }
+
+    } else if (cmd === 0x37) {
+      // PRE_FRAME: buttons pressed = uint16 at payload byte 10
+      // Count unique button-state changes as a proxy for inputs/min
+      if (size >= 12) {
+        const port = data[ps + 4];
+        const isFollower = data[ps + 5];
+        if (!isFollower && port <= 3) {
+          const buttons = view.getUint16(ps + 10, false);
+          if (buttons !== (prevButtons[port] ?? -1)) {
+            inputCounts[port] = (inputCounts[port] ?? 0) + 1;
+            prevButtons[port] = buttons;
+          }
         }
       }
 
@@ -255,7 +287,7 @@ function parseEventStream(data: Uint8Array): StreamResult {
     pos += 1 + size;
   }
 
-  return { matchId, stageId, gameEndMethod, lrasInitiator, finalStocks, maxPercents, durationFrames, actionFrames, lCancelSuccesses, lCancelAttempts };
+  return { matchId, stageId, gameEndMethod, lrasInitiator, finalStocks, maxPercents, durationFrames, actionFrames, lCancelSuccesses, lCancelAttempts, stockPercents, inputCounts };
 }
 
 // ── Metadata parser ────────────────────────────────────────────────────────
@@ -340,6 +372,8 @@ export interface ParsedGameRow {
   neutral_win_ratio: number | null;
   inputs_per_minute: number | null;
   l_cancel_ratio: number | null;
+  avg_kill_percent: number | null;
+  avg_death_percent: number | null;
 }
 
 const METHOD_GAME = 2;
@@ -439,11 +473,23 @@ export function parseSlpBytes(
     openings_per_kill:  convStats.openings_per_kill,
     damage_per_opening: convStats.damage_per_opening,
     neutral_win_ratio:  convStats.neutral_win_ratio,
-    inputs_per_minute:  null, // requires per-frame input data, not tracked yet
+    inputs_per_minute: (() => {
+      const inputs = stream.inputCounts[playerPort] ?? 0;
+      const mins   = stream.durationFrames / 3600;
+      return mins > 0 ? Math.round(inputs / mins) : null;
+    })(),
     l_cancel_ratio: (() => {
       const attempts  = stream.lCancelAttempts[playerPort]  ?? 0;
       const successes = stream.lCancelSuccesses[playerPort] ?? 0;
       return attempts > 0 ? successes / attempts : null;
+    })(),
+    avg_kill_percent: (() => {
+      const percents = stream.stockPercents[oppPort] ?? [];
+      return percents.length > 0 ? percents.reduce((a, b) => a + b, 0) / percents.length : null;
+    })(),
+    avg_death_percent: (() => {
+      const percents = stream.stockPercents[playerPort] ?? [];
+      return percents.length > 0 ? percents.reduce((a, b) => a + b, 0) / percents.length : null;
     })(),
   }];
 }

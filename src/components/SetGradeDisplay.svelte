@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { SetGrade, GradeLetter } from "../lib/grading";
+  import type { SetGrade, GradeLetter, CategoryKey } from "../lib/grading";
 
   let { grade }: { grade: SetGrade } = $props();
 
@@ -12,87 +12,112 @@
     F: "#e74c3c",
   };
 
-  function gradeColor(g: GradeLetter | null): string {
+  function gc(g: GradeLetter | null): string {
     return g ? (GRADE_COLORS[g] ?? "var(--muted)") : "var(--muted)";
   }
 
-  const statKeys = [
-    "neutral_win_ratio",
-    "openings_per_kill",
-    "damage_per_opening",
-    "l_cancel_ratio",
-  ] as const;
+  const CATEGORY_ORDER: CategoryKey[] = ["neutral", "punish", "defense", "execution"];
 </script>
 
 <div class="card" style="margin-bottom: 16px">
-  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px">
+
+  <!-- Header: overall badge + set context -->
+  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px">
     <div>
-      <div class="section-title" style="margin-bottom: 2px">Set Grade</div>
+      <div class="section-title" style="margin-bottom: 3px">Set Grade</div>
       <div style="font-size: 11px; color: var(--muted)">
-        vs {grade.opponentChar} ·
+        {grade.playerChar} vs {grade.opponentChar} ·
         <span style="color: {grade.setResult === 'win' ? '#2ecc71' : '#e74c3c'}">
           {grade.setResult === "win" ? "Win" : "Loss"}
         </span>
         {grade.wins}–{grade.losses}
         {#if grade.baselineSource === "overall"}
-          <span style="color: var(--muted)"> · overall baseline</span>
+          <span style="opacity: 0.6"> · overall baseline</span>
         {/if}
       </div>
     </div>
 
-    <!-- Overall grade badge -->
     <div style="
-      width: 56px; height: 56px; border-radius: 10px;
-      background: {gradeColor(grade.letter)}22;
-      border: 2px solid {gradeColor(grade.letter)};
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      width: 60px; height: 60px; border-radius: 12px; flex-shrink: 0;
+      background: {gc(grade.letter)}1a;
+      border: 2px solid {gc(grade.letter)};
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
     ">
-      <div style="font-size: 26px; font-weight: 800; line-height: 1; color: {gradeColor(grade.letter)}">
-        {grade.letter}
-      </div>
-      <div style="font-size: 9px; color: var(--muted); margin-top: 1px">{grade.score.toFixed(0)}</div>
+      <div style="font-size: 28px; font-weight: 800; line-height: 1; color: {gc(grade.letter)}">{grade.letter}</div>
+      <div style="font-size: 9px; color: var(--muted)">{grade.score.toFixed(0)}</div>
     </div>
   </div>
 
-  <!-- Per-stat breakdown -->
-  <div style="display: flex; flex-direction: column; gap: 6px">
-    {#each statKeys as key}
-      {@const stat = grade.breakdown[key]}
-      <div style="
-        display: grid; grid-template-columns: 1fr 64px 80px 28px;
-        align-items: center; gap: 8px;
-        background: var(--bg); border-radius: 6px; padding: 7px 10px;
-      ">
-        <!-- Label + value -->
-        <div>
-          <div style="font-size: 11px; font-weight: 500">{stat.label}</div>
-          <div style="font-size: 10px; color: var(--muted)">{stat.formatted}</div>
-        </div>
+  <!-- Category rows -->
+  <div style="display: flex; flex-direction: column; gap: 10px">
+    {#each CATEGORY_ORDER as catKey}
+      {@const cat = grade.categories[catKey]}
+      {@const catStats = grade.breakdown}
 
-        <!-- Score bar -->
-        <div style="height: 4px; background: var(--border); border-radius: 2px; overflow: hidden">
-          {#if stat.score !== null}
+      <!-- Category header -->
+      <div>
+        <div style="
+          display: flex; align-items: center; gap: 8px; margin-bottom: 5px;
+          padding-bottom: 4px; border-bottom: 1px solid var(--border);
+        ">
+          <div style="font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: var(--text)">
+            {cat.label.toUpperCase()}
+          </div>
+          {#if cat.letter !== null}
             <div style="
-              height: 100%; border-radius: 2px;
-              width: {stat.score}%;
-              background: {gradeColor(stat.grade)};
-            "></div>
+              font-size: 11px; font-weight: 700; color: {gc(cat.letter)};
+              background: {gc(cat.letter)}1a; border-radius: 4px; padding: 1px 6px;
+            ">{cat.letter}</div>
+            <div style="font-size: 10px; color: var(--muted)">{cat.score?.toFixed(0)}</div>
+          {:else}
+            <div style="font-size: 10px; color: var(--muted)">—</div>
           {/if}
         </div>
 
-        <!-- Numeric score -->
-        <div style="font-size: 10px; color: var(--muted); text-align: right">
-          {stat.score !== null ? stat.score.toFixed(0) + " / 100" : "—"}
-        </div>
+        <!-- Stat rows within category -->
+        {#each (
+          catKey === "neutral"   ? ["neutral_win_ratio",  "openings_per_kill"]  :
+          catKey === "punish"    ? ["damage_per_opening", "avg_kill_percent"]   :
+          catKey === "defense"   ? ["avg_death_percent"]                        :
+                                   ["l_cancel_ratio",     "inputs_per_minute"]
+        ) as statKey}
+          {@const stat = catStats[statKey as keyof typeof catStats]}
+          <div style="
+            display: grid; grid-template-columns: 1fr 72px 52px 26px;
+            align-items: center; gap: 8px;
+            background: var(--bg); border-radius: 6px; padding: 6px 10px;
+            margin-bottom: 3px;
+          ">
+            <!-- Label + value -->
+            <div>
+              <div style="font-size: 11px; font-weight: 500">{stat.label}</div>
+              <div style="font-size: 10px; color: var(--muted)">{stat.formatted}</div>
+            </div>
 
-        <!-- Grade letter -->
-        <div style="
-          font-size: 13px; font-weight: 700; text-align: center;
-          color: {gradeColor(stat.grade)};
-        ">
-          {stat.grade ?? "—"}
-        </div>
+            <!-- Score bar -->
+            <div style="height: 3px; background: var(--border); border-radius: 2px; overflow: hidden">
+              {#if stat.score !== null}
+                <div style="
+                  height: 100%; border-radius: 2px; width: {stat.score}%;
+                  background: {gc(stat.grade)};
+                "></div>
+              {/if}
+            </div>
+
+            <!-- Score number -->
+            <div style="font-size: 10px; color: var(--muted); text-align: right">
+              {stat.score !== null ? stat.score.toFixed(0) : "—"}
+            </div>
+
+            <!-- Grade letter -->
+            <div style="
+              font-size: 12px; font-weight: 700; text-align: center;
+              color: {gc(stat.grade)};
+            ">{stat.grade ?? "—"}</div>
+          </div>
+        {/each}
       </div>
     {/each}
   </div>
+
 </div>
