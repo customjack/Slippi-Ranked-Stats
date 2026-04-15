@@ -10,12 +10,29 @@
   import PremiumGate from "../PremiumGate.svelte";
   import SetGradeDisplay from "../SetGradeDisplay.svelte";
 
-  // ── Dev-only: grade the most recent completed set on demand ──────────────
+  // ── Dev-only: grade any completed set on demand ─────────────────────────
   // The DB only stores game metadata, not per-game stats — so we re-parse
-  // each .slp file in the most recent completed set, then run gradeSet.
+  // each .slp file in the chosen set, then run gradeSet.
   let devTestBusy = $state(false);
   let devTestStatus = $state<string | null>(null);
   let devTestGrade = $state<SetGrade | null>(null);
+  let devSelectedMatchId = $state<string>("");
+
+  // Most recent first, capped to keep the dropdown usable
+  let devCompletedSets = $derived(
+    [...$sets]
+      .filter((s) => Math.max(s.wins, s.losses) >= 2)
+      .reverse()
+      .slice(0, 100)
+  );
+
+  function fmtSetOption(s: typeof devCompletedSets[number]): string {
+    const date = new Date(s.timestamp);
+    const dateStr = `${date.getMonth() + 1}/${date.getDate()}`;
+    const opp = CHARACTERS[s.opponent_char_ids[0]] ?? `Char ${s.opponent_char_ids[0]}`;
+    const result = s.result === "win" ? "W" : "L";
+    return `${dateStr} · vs ${s.opponent_code} (${opp}) · ${result} ${s.wins}-${s.losses}`;
+  }
 
   async function runDevGradeTest() {
     devTestBusy = true;
@@ -28,18 +45,20 @@
         return;
       }
 
-      const completedSets = $sets.filter((s) => Math.max(s.wins, s.losses) >= 2);
-      if (completedSets.length === 0) {
+      if (devCompletedSets.length === 0) {
         devTestStatus = "No completed sets in your DB. Scan your replay folder first.";
         return;
       }
 
-      const lastSet = completedSets.at(-1)!;
-      devTestStatus = `Re-parsing ${lastSet.games.length} game${lastSet.games.length === 1 ? "" : "s"} from set vs ${lastSet.opponent_code}…`;
+      const target =
+        devCompletedSets.find((s) => s.match_id === devSelectedMatchId)
+        ?? devCompletedSets[0];
+
+      devTestStatus = `Re-parsing ${target.games.length} game${target.games.length === 1 ? "" : "s"} from set vs ${target.opponent_code}…`;
 
       const liveGames: LiveGameStats[] = [];
       let parseFailures = 0;
-      for (const g of lastSet.games) {
+      for (const g of target.games) {
         if (!g.filepath) { parseFailures++; continue; }
         try {
           const parsed = await parseSlpFile(g.filepath, code);
@@ -74,12 +93,12 @@
         return;
       }
 
-      const playerChar = CHARACTERS[lastSet.player_char_ids[0]] ?? "Unknown";
-      const opponentChar = CHARACTERS[lastSet.opponent_char_ids[0]] ?? "Unknown";
-      const grade = gradeSet(liveGames, playerChar, opponentChar, lastSet.result, lastSet.wins, lastSet.losses);
+      const playerChar = CHARACTERS[target.player_char_ids[0]] ?? "Unknown";
+      const opponentChar = CHARACTERS[target.opponent_char_ids[0]] ?? "Unknown";
+      const grade = gradeSet(liveGames, playerChar, opponentChar, target.result, target.wins, target.losses);
       devTestGrade = grade;
       const failNote = parseFailures > 0 ? ` (${parseFailures} file${parseFailures === 1 ? "" : "s"} skipped)` : "";
-      devTestStatus = `Graded set vs ${lastSet.opponent_code} — ${lastSet.wins}–${lastSet.losses}${failNote}.`;
+      devTestStatus = `Graded set vs ${target.opponent_code} — ${target.wins}–${target.losses}${failNote}.`;
     } catch (e: any) {
       devTestStatus = `Error: ${e?.message ?? String(e)}`;
     } finally {
@@ -162,20 +181,36 @@
 </script>
 
 {#if import.meta.env.DEV}
-  <!-- Dev-only test affordance: re-parse the most recent completed set's
-       .slp files and run gradeSet against current benchmarks. Lets us
-       iterate on the grading UI without playing a live ranked set. -->
+  <!-- Dev-only test affordance: re-parse a completed set's .slp files and
+       run gradeSet against current benchmarks. Lets us iterate on the
+       grading UI without playing a live ranked set. -->
   <div class="card" style="margin-bottom: 16px; border-left: 3px solid #f0c040">
-    <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px">
-      <div style="flex: 1; min-width: 0">
-        <div class="section-title" style="margin-bottom: 2px">Dev: Grade Last Completed Set</div>
-        <div style="font-size: 11px; color: var(--muted); line-height: 1.4">
-          Re-parses the .slp files of the most recent completed set in your DB and runs <code>gradeSet</code> against current benchmarks. Visible in dev builds only.
-        </div>
+    <div style="margin-bottom: 10px">
+      <div class="section-title" style="margin-bottom: 2px">Dev: Grade a Completed Set</div>
+      <div style="font-size: 11px; color: var(--muted); line-height: 1.4">
+        Pick any of your last {devCompletedSets.length} completed sets — the .slp files are re-parsed and run through <code>gradeSet</code> against the current benchmarks. Visible in dev builds only.
       </div>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 8px">
+      <select
+        bind:value={devSelectedMatchId}
+        disabled={devTestBusy || devCompletedSets.length === 0}
+        style="
+          flex: 1; min-width: 0; padding: 8px 10px;
+          background: var(--bg); color: var(--text);
+          border: 1px solid var(--border); border-radius: 6px;
+          font-size: 12px; font-family: inherit;
+        "
+      >
+        <option value="">— Most recent ({devCompletedSets[0] ? fmtSetOption(devCompletedSets[0]) : "no sets"}) —</option>
+        {#each devCompletedSets as s (s.match_id)}
+          <option value={s.match_id}>{fmtSetOption(s)}</option>
+        {/each}
+      </select>
       <button
         type="button"
-        disabled={devTestBusy}
+        disabled={devTestBusy || devCompletedSets.length === 0}
         onclick={runDevGradeTest}
         style="
           padding: 8px 14px; font-size: 12px; font-weight: 600;
@@ -184,9 +219,10 @@
           flex-shrink: 0;
         "
       >
-        {devTestBusy ? "Grading…" : "Grade Last Set"}
+        {devTestBusy ? "Grading…" : "Grade Set"}
       </button>
     </div>
+
     {#if devTestStatus}
       <div style="font-size: 11px; color: var(--muted); margin-top: 8px">{devTestStatus}</div>
     {/if}
