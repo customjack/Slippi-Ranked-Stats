@@ -42,28 +42,32 @@ CHARACTERS: dict[int, str] = {
 }
 
 # ── Action-state helpers ───────────────────────────────────────────────────
-# Ported directly from slp_parser.ts — same logic, same state ranges.
+# Kept in sync with fetch_slippilab_replays.py and slp_parser.ts.
 
 def is_in_control(state: int) -> bool:
-    """True when the character is in a 'neutral control' state (not in hitstun, startup, etc.)."""
     return (
-        (0   <= state <= 17) or   # grounded movement / wait
-        (20  <= state <= 24) or   # dash / run
-        state in (26, 27)    or   # jumpsquat / jump
-        (45  <= state <= 51)      # aerial control states
+        (14 <= state <= 24) or   # grounded control + controlled jump
+        (39 <= state <= 41) or   # squat
+        (45 <= state <= 64) or   # ground attack
+        state == 212             # grab
     )
 
 def is_vulnerable(state: int) -> bool:
-    """True when the character just entered a vulnerable (combo'd) state."""
     return (
-        (70  <= state <= 104) or  # hitstun variants
-        (105 <= state <= 107) or  # shield break stun
-        (108 <= state <= 112) or  # tech states
-        (155 <= state <= 162) or  # ledge grab / hang
-        (183 <= state <= 198) or  # down states
-        (199 <= state <= 204) or  # tech states
-        (223 <= state <= 232)     # grabbed / command-grabbed
+        (0   <= state <= 10)  or   # dying
+        (75  <= state <= 91)  or   # damaged
+        (183 <= state <= 198) or   # down
+        (199 <= state <= 204) or   # teching
+        (223 <= state <= 232)      # grabbed
     )
+
+def is_attacking(state: int) -> bool:
+    """True when the character is performing an attack (counter-hit detection)."""
+    return (44 <= state <= 74) or (176 <= state <= 178)
+
+DEFENSIVE_STATES: set[int] = {29, 30, 31}  # roll forward, roll backward, spot dodge
+
+MIN_MATCHUP_SAMPLES = 20
 
 # ── Per-game stat computation ──────────────────────────────────────────────
 
@@ -71,10 +75,8 @@ def compute_game_stats(filepath: str, player_port: int):
     """
     Parse a .slp file and compute performance stats for the given player port.
 
-    Returns a dict with keys:
-        openings_per_kill, neutral_win_ratio, damage_per_opening,
-        l_cancel_ratio, total_damage
-    or None if the file cannot be parsed or is not a valid 1v1.
+    Returns a dict with all STAT_KEYS values, or None if the file cannot be
+    parsed or is not a valid 1v1.
     """
     try:
         game = Game(filepath)
@@ -90,17 +92,29 @@ def compute_game_stats(filepath: str, player_port: int):
     opp_port = next(p for p in active_ports if p != player_port)
 
     # Accumulators
-    neutral_wins   = 0
-    neutral_losses = 0
-    prev_p_ctrl    = False
-    prev_o_ctrl    = False
-    lc_attempts    = 0
-    lc_successes   = 0
+    neutral_wins        = 0
+    neutral_losses      = 0
+    counter_hits        = 0
+    prev_p_ctrl         = False
+    prev_o_ctrl         = False
+    prev_o_state        = -1
+    lc_attempts         = 0
+    lc_successes        = 0
+    defensive_options   = 0
+    prev_p_action_state = -1
+
+    # Per-stock kill/death percent tracking
+    kill_percents:  list[float] = []
+    death_percents: list[float] = []
 
     # For total damage: track per-stock damage by watching stock transitions
-    damage_by_stock: list[float] = []
-    prev_opp_stocks = None  # type: Optional[int]
-    prev_opp_damage: float       = 0.0
+    total_damage_dealt = 0.0
+    damage_this_stock  = 0.0
+    prev_opp_stocks    = None  # type: Optional[int]
+    prev_opp_damage    = 0.0
+    prev_player_stocks = None
+    prev_player_damage = 0.0
+    frame_count        = 0
 
     for frame in game.frames:
         p_data = frame.ports[player_port]
@@ -111,17 +125,25 @@ def compute_game_stats(filepath: str, player_port: int):
         p_post = p_data.leader.post
         o_post = o_data.leader.post
 
-        # State integers (ActionState enum or raw int from unknown states)
         p_state = int(p_post.state) if p_post.state is not None else 0
         o_state = int(o_post.state) if o_post.state is not None else 0
+        frame_count += 1
 
-        # ── Neutral win/loss transitions ──────────────────────────────────
+        # ── Neutral win/loss transitions with counter-hit tracking ────────
         if prev_o_ctrl and is_vulnerable(o_state):
             neutral_wins += 1
+            if is_attacking(prev_o_state):
+                counter_hits += 1
         if prev_p_ctrl and is_vulnerable(p_state):
             neutral_losses += 1
-        prev_p_ctrl = is_in_control(p_state)
-        prev_o_ctrl = is_in_control(o_state)
+        prev_p_ctrl  = is_in_control(p_state)
+        prev_o_ctrl  = is_in_control(o_state)
+        prev_o_state = o_state
+
+        # ── Defensive option tracking ─────────────────────────────────────
+        if p_state in DEFENSIVE_STATES and prev_p_action_state not in DEFENSIVE_STATES:
+            defensive_options += 1
+        prev_p_action_state = p_state
 
         # ── L-cancel tracking ─────────────────────────────────────────────
         lc = p_post.l_cancel
@@ -130,40 +152,52 @@ def compute_game_stats(filepath: str, player_port: int):
             if lc == LCancel.SUCCESS:
                 lc_successes += 1
 
-        # ── Total damage tracking (sum across all stocks) ─────────────────
-        curr_opp_stocks = o_post.stocks if o_post.stocks is not None else prev_opp_stocks
-        curr_opp_damage = o_post.damage if o_post.damage is not None else 0.0
+        # ── Kill / death percent + total damage tracking ──────────────────
+        curr_opp_stocks    = o_post.stocks if o_post.stocks is not None else prev_opp_stocks
+        curr_player_stocks = p_post.stocks if p_post.stocks is not None else prev_player_stocks
+        curr_opp_damage    = float(o_post.damage) if o_post.damage is not None else 0.0
+        curr_player_damage = float(p_post.damage) if p_post.damage is not None else 0.0
 
         if prev_opp_stocks is not None and curr_opp_stocks is not None:
             if curr_opp_stocks < prev_opp_stocks:
-                # Opponent lost a stock — record the damage done this stock
-                damage_by_stock.append(prev_opp_damage)
-                prev_opp_damage = 0.0
+                kill_percents.append(prev_opp_damage)
+                total_damage_dealt += damage_this_stock
+                damage_this_stock = 0.0
             else:
-                prev_opp_damage = curr_opp_damage
+                damage_this_stock = curr_opp_damage
+        else:
+            damage_this_stock = curr_opp_damage
 
-        prev_opp_stocks = curr_opp_stocks
+        if prev_player_stocks is not None and curr_player_stocks is not None:
+            if curr_player_stocks < prev_player_stocks:
+                death_percents.append(prev_player_damage)
 
-    # Record damage on the final stock (may not have resulted in a kill)
-    if prev_opp_damage > 0:
-        damage_by_stock.append(prev_opp_damage)
+        prev_opp_stocks    = curr_opp_stocks
+        prev_player_stocks = curr_player_stocks
+        prev_opp_damage    = curr_opp_damage
+        prev_player_damage = curr_player_damage
 
-    # Get final stocks from the last frame
+    if damage_this_stock > 0:
+        total_damage_dealt += damage_this_stock
+
     last_frame = game.frames[-1] if game.frames else None
     if last_frame is None or last_frame.ports[opp_port] is None:
         return None
 
-    final_opp_stocks = last_frame.ports[opp_port].leader.post.stocks or 0
-    kills        = 4 - final_opp_stocks
-    total_neutral = neutral_wins + neutral_losses
-    total_damage  = sum(damage_by_stock)
+    final_opp_stocks  = last_frame.ports[opp_port].leader.post.stocks or 0
+    kills             = 4 - final_opp_stocks
+    total_neutral     = neutral_wins + neutral_losses
+    duration_min      = frame_count / 3600.0
 
     return {
-        "openings_per_kill":  neutral_wins / kills        if kills > 0          else None,
-        "neutral_win_ratio":  neutral_wins / total_neutral if total_neutral > 0  else None,
-        "damage_per_opening": total_damage  / neutral_wins if neutral_wins > 0   else None,
-        "l_cancel_ratio":     lc_successes  / lc_attempts  if lc_attempts > 0    else None,
-        "total_damage":       total_damage  if total_damage > 0                  else None,
+        "neutral_win_ratio":     neutral_wins / total_neutral            if total_neutral > 0  else None,
+        "openings_per_kill":     neutral_wins / kills                    if kills > 0          else None,
+        "damage_per_opening":    total_damage_dealt / neutral_wins       if neutral_wins > 0   else None,
+        "counter_hit_rate":      counter_hits / neutral_wins             if neutral_wins > 0   else None,
+        "defensive_option_rate": defensive_options / duration_min        if duration_min > 0   else None,
+        "l_cancel_ratio":        lc_successes / lc_attempts              if lc_attempts > 0    else None,
+        "avg_kill_percent":      sum(kill_percents) / len(kill_percents)   if kill_percents     else None,
+        "avg_death_percent":     sum(death_percents) / len(death_percents) if death_percents    else None,
     }
 
 # ── Percentile helpers ─────────────────────────────────────────────────────
@@ -199,7 +233,16 @@ def compute_percentiles(values: list[float]) -> dict:
 
 # ── Main ───────────────────────────────────────────────────────────────────
 
-STAT_KEYS = ["openings_per_kill", "neutral_win_ratio", "damage_per_opening", "l_cancel_ratio", "total_damage"]
+STAT_KEYS = [
+    "neutral_win_ratio",
+    "openings_per_kill",
+    "damage_per_opening",
+    "counter_hit_rate",
+    "defensive_option_rate",
+    "l_cancel_ratio",
+    "avg_kill_percent",
+    "avg_death_percent",
+]
 
 def main():
     parser = argparse.ArgumentParser(description="Generate grade baselines from local Slippi replay DB")
@@ -230,12 +273,13 @@ def main():
     total = len(rows)
     print(f"Found {total} ranked games to process.")
 
-    # Accumulators: by_char[char_name][stat_key] = [values...]
-    by_char: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
-    overall: dict[str, list[float]] = defaultdict(list)
+    # Accumulators
+    by_player_char: dict[str, dict[str, list[float]]]                   = defaultdict(lambda: defaultdict(list))
+    by_matchup:     dict[str, dict[str, dict[str, list[float]]]]         = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    overall:        dict[str, list[float]]                               = defaultdict(list)
 
-    errors   = 0
-    skipped  = 0
+    errors    = 0
+    skipped   = 0
     processed = 0
 
     for i, (filepath, player_port, player_char_id, opponent_char_id, result) in enumerate(rows):
@@ -251,45 +295,65 @@ def main():
             errors += 1
             continue
 
-        char_name = CHARACTERS.get(opponent_char_id, f"Unknown_{opponent_char_id}")
+        player_char_name = CHARACTERS.get(player_char_id,   f"Unknown_{player_char_id}")
+        opp_char_name    = CHARACTERS.get(opponent_char_id,  f"Unknown_{opponent_char_id}")
 
         for key in STAT_KEYS:
             val = stats.get(key)
             if val is not None and not (isinstance(val, float) and (val != val)):  # skip NaN
-                by_char[char_name][key].append(val)
+                by_player_char[player_char_name][key].append(val)
+                by_matchup[player_char_name][opp_char_name][key].append(val)
                 overall[key].append(val)
 
         processed += 1
 
     print(f"\nDone. Processed: {processed}, Skipped: {skipped}, Errors: {errors}")
 
-    # Build output structure
-    output = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "sample_size": processed,
-        "by_character": {},
-    }
+    def build_char_section(accum: dict[str, dict[str, list[float]]]) -> dict:
+        section = {}
+        for char_name in sorted(accum.keys()):
+            char_data = accum[char_name]
+            n = max((len(char_data[k]) for k in STAT_KEYS if char_data[k]), default=0)
+            section[char_name] = {"sample_size": n}
+            for key in STAT_KEYS:
+                section[char_name][key] = compute_percentiles(char_data[key])
+        return section
 
-    # Per-character percentiles
-    for char_name in sorted(by_char.keys()):
-        char_data = by_char[char_name]
-        n = max(len(char_data[k]) for k in STAT_KEYS if char_data[k]) if any(char_data[k] for k in STAT_KEYS) else 0
-        output["by_character"][char_name] = {"sample_size": n}
-        for key in STAT_KEYS:
-            output["by_character"][char_name][key] = compute_percentiles(char_data[key])
+    def build_matchup_section(accum: dict[str, dict[str, dict[str, list[float]]]]) -> dict:
+        section: dict = {}
+        for player_char in sorted(accum.keys()):
+            section[player_char] = {}
+            for opp_char in sorted(accum[player_char].keys()):
+                matchup_data = accum[player_char][opp_char]
+                n = max((len(matchup_data[k]) for k in STAT_KEYS if matchup_data[k]), default=0)
+                if n < MIN_MATCHUP_SAMPLES:
+                    continue
+                section[player_char][opp_char] = {"sample_size": n}
+                for key in STAT_KEYS:
+                    section[player_char][opp_char][key] = compute_percentiles(matchup_data[key])
+            if not section[player_char]:
+                del section[player_char]
+        return section
 
-    # Overall (character-agnostic fallback)
     overall_entry: dict = {"sample_size": processed}
     for key in STAT_KEYS:
         overall_entry[key] = compute_percentiles(overall[key])
-    output["by_character"]["_overall"] = overall_entry
 
-    # Write output
+    by_player_char_section = build_char_section(by_player_char)
+    by_player_char_section["_overall"] = overall_entry
+
+    output = {
+        "generated_at":  datetime.now(timezone.utc).isoformat(),
+        "sample_size":   processed,
+        "by_player_char": by_player_char_section,
+        "by_matchup":    build_matchup_section(by_matchup),
+    }
+
     with open(args.output, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2)
 
     print(f"\nBaselines written to: {args.output}")
-    print(f"Characters with data: {sorted(k for k in output['by_character'] if k != '_overall')}")
+    print(f"Player chars with data: {sorted(k for k in output['by_player_char'] if k != '_overall')}")
 
 
 if __name__ == "__main__":

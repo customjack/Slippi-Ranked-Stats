@@ -4,15 +4,24 @@
  * !! DEV ONLY — not shipped to users yet !!
  *
  * Grades a completed set across four equally-weighted categories:
- *   Neutral   (neutral_win_ratio, openings_per_kill)
- *   Punish    (damage_per_opening, avg_kill_percent)
- *   Defense   (avg_death_percent)
+ *   Neutral   (neutral_win_ratio, counter_hit_rate)
+ *   Punish    (damage_per_opening, openings_per_kill, avg_kill_percent*)
+ *   Defense   (avg_death_percent*, defensive_option_rate)
  *   Execution (l_cancel_ratio, inputs_per_minute)
  *
- * Each stat is scored 0–100 via percentile interpolation against
- * character-specific benchmarks (by_player_char). Category score =
+ * * avg_kill_percent and avg_death_percent are only scored when a character-
+ *   specific or matchup-specific baseline is available. The _overall bucket
+ *   has identical values for both by construction (symmetric pooling), so
+ *   scoring them against _overall would produce misleading results.
+ *
+ * Benchmark lookup priority:
+ *   1. by_matchup[playerChar][oppChar]  — matchup-specific (most precise)
+ *   2. by_player_char[playerChar]       — character only
+ *   3. by_player_char["_overall"]       — cross-character fallback
+ *
+ * Each stat is scored 0–100 via percentile interpolation. Category score =
  * equal-weight average of its non-null stats. Overall score = equal-weight
- * average of the four category scores.
+ * average of the four category scores, plus a +5 win bonus (capped at 100).
  */
 
 import type { LiveGameStats } from "./store";
@@ -42,17 +51,19 @@ export interface SetGrade {
   score:      number;           // 0–100 weighted composite
   categories: Record<CategoryKey, CategoryGrade>;
   breakdown: {
-    neutral_win_ratio:  StatGrade;
-    openings_per_kill:  StatGrade;
-    damage_per_opening: StatGrade;
-    avg_kill_percent:   StatGrade;
-    avg_death_percent:  StatGrade;
-    l_cancel_ratio:     StatGrade;
-    inputs_per_minute:  StatGrade;
+    neutral_win_ratio:     StatGrade;
+    counter_hit_rate:      StatGrade;
+    openings_per_kill:     StatGrade;
+    damage_per_opening:    StatGrade;
+    avg_kill_percent:      StatGrade;
+    avg_death_percent:     StatGrade;
+    defensive_option_rate: StatGrade;
+    l_cancel_ratio:        StatGrade;
+    inputs_per_minute:     StatGrade;
   };
   playerChar:     string;
   opponentChar:   string;
-  baselineSource: "character" | "overall";
+  baselineSource: "matchup" | "character" | "overall";
   setResult:      "win" | "loss";
   wins:           number;
   losses:         number;
@@ -61,27 +72,33 @@ export interface SetGrade {
 // ── Stat configuration ─────────────────────────────────────────────────────
 
 /** Stats where LOWER raw value = BETTER performance. */
-const INVERTED_STATS = new Set(["openings_per_kill", "avg_kill_percent"]);
+const INVERTED_STATS = new Set([
+  "openings_per_kill",
+  "avg_kill_percent",
+  "defensive_option_rate",
+]);
 
 /** Category definitions — stats listed in display order within each category.
  *  Exported so the display component can iterate the same mapping (avoids
  *  the previous duplicated list in SetGradeDisplay.svelte that drifted on
  *  category changes). */
 export const CATEGORY_DEFS: Record<CategoryKey, { label: string; stats: (keyof SetGrade["breakdown"])[] }> = {
-  neutral:   { label: "Neutral",   stats: ["neutral_win_ratio"]                                            },
-  punish:    { label: "Punish",    stats: ["damage_per_opening", "openings_per_kill", "avg_kill_percent"] },
-  defense:   { label: "Defense",   stats: ["avg_death_percent"]                                            },
-  execution: { label: "Execution", stats: ["l_cancel_ratio",     "inputs_per_minute"]                     },
+  neutral:   { label: "Neutral",   stats: ["neutral_win_ratio", "counter_hit_rate"]                                    },
+  punish:    { label: "Punish",    stats: ["damage_per_opening", "openings_per_kill", "avg_kill_percent"]              },
+  defense:   { label: "Defense",   stats: ["avg_death_percent", "defensive_option_rate"]                               },
+  execution: { label: "Execution", stats: ["l_cancel_ratio", "inputs_per_minute"]                                      },
 };
 
 const STAT_LABELS: Record<string, string> = {
-  neutral_win_ratio:  "Neutral Win Rate",
-  openings_per_kill:  "Openings / Kill",
-  damage_per_opening: "Damage / Opening",
-  avg_kill_percent:   "Avg Kill %",
-  avg_death_percent:  "Avg Death %",
-  l_cancel_ratio:     "L-Cancel %",
-  inputs_per_minute:  "Inputs / Min",
+  neutral_win_ratio:     "Neutral Win Rate",
+  counter_hit_rate:      "Counter Hit Rate",
+  openings_per_kill:     "Openings / Kill",
+  damage_per_opening:    "Damage / Opening",
+  avg_kill_percent:      "Avg Kill %",
+  avg_death_percent:     "Avg Death %",
+  defensive_option_rate: "Def. Options / Min",
+  l_cancel_ratio:        "L-Cancel %",
+  inputs_per_minute:     "Inputs / Min",
 };
 
 // ── Percentile scoring ─────────────────────────────────────────────────────
@@ -119,11 +136,13 @@ function scoreToGrade(score: number): GradeLetter {
 
 function formatStatValue(key: string, value: number | null): string {
   if (value === null) return "—";
-  if (key === "neutral_win_ratio" || key === "l_cancel_ratio") return (value * 100).toFixed(0) + "%";
-  if (key === "damage_per_opening") return value.toFixed(1);
-  if (key === "openings_per_kill")  return value.toFixed(2);
+  if (key === "neutral_win_ratio" || key === "l_cancel_ratio" || key === "counter_hit_rate")
+    return (value * 100).toFixed(0) + "%";
+  if (key === "damage_per_opening")    return value.toFixed(1);
+  if (key === "openings_per_kill")     return value.toFixed(2);
   if (key === "avg_kill_percent" || key === "avg_death_percent") return value.toFixed(0) + "%";
-  if (key === "inputs_per_minute")  return Math.round(value).toString();
+  if (key === "inputs_per_minute")     return Math.round(value).toString();
+  if (key === "defensive_option_rate") return value.toFixed(1);
   return value.toFixed(2);
 }
 
@@ -155,8 +174,8 @@ function averageSetStats(games: LiveGameStats[]): Record<string, number | null> 
  * Grade a completed set.
  *
  * @param games        All LiveGameStats entries for this set's match_id
- * @param playerChar   Player's character name (used for character-specific benchmarks)
- * @param opponentChar Opponent's character name (stored for display)
+ * @param playerChar   Player's character name (used for benchmark lookup)
+ * @param opponentChar Opponent's character name (used for matchup benchmark lookup)
  * @param setResult    Whether the player won or lost the set
  * @param wins         Number of games won
  * @param losses       Number of games lost
@@ -169,9 +188,23 @@ export function gradeSet(
   wins: number,
   losses: number,
 ): SetGrade {
-  // Look up benchmarks by player character; fall back to _overall
-  const benchmarks    = BENCHMARKS[playerChar] ?? BENCHMARKS["_overall"];
-  const baselineSource: "character" | "overall" = BENCHMARKS[playerChar] ? "character" : "overall";
+  // ── Three-tier benchmark lookup ────────────────────────────────────────────
+  // matchup (player × opp) → player char → _overall
+  const matchupBenchmarks = BENCHMARKS.by_matchup?.[playerChar]?.[opponentChar];
+  const charBenchmarks    = BENCHMARKS.by_player_char[playerChar];
+  const overallBenchmarks = BENCHMARKS.by_player_char["_overall"];
+
+  const benchmarks = matchupBenchmarks ?? charBenchmarks ?? overallBenchmarks;
+  const baselineSource: "matchup" | "character" | "overall" =
+    matchupBenchmarks ? "matchup" :
+    charBenchmarks    ? "character" : "overall";
+
+  // avg_kill% and avg_death% are heavily character-dependent. The _overall bucket
+  // has identical values for both by construction (symmetric 1v1 pooling), making
+  // scores misleading. Only score them when we have character-specific data.
+  const SKIP_ON_OVERALL = new Set(
+    baselineSource === "overall" ? ["avg_kill_percent", "avg_death_percent"] : []
+  );
 
   const averaged = averageSetStats(games);
 
@@ -182,11 +215,12 @@ export function gradeSet(
     const value      = averaged[key] ?? null;
     const thresholds = (benchmarks as unknown as Record<string, StatThresholds>)[key];
     const inverted   = INVERTED_STATS.has(key);
+    const skip       = SKIP_ON_OVERALL.has(key);
 
     let score: number | null = null;
     let grade: GradeLetter | null = null;
 
-    if (value !== null && thresholds) {
+    if (!skip && value !== null && thresholds) {
       score = percentileScore(value, thresholds, inverted);
       grade = scoreToGrade(score);
     }
@@ -216,14 +250,19 @@ export function gradeSet(
     }
   }
 
-  // ── Overall score (equal weight across non-null categories) ──────────────
+  // ── Overall score: equal weight across non-null categories + win bonus ────
   const catScores = Object.values(categories)
     .map((c) => c.score)
     .filter((s): s is number => s !== null);
 
-  const overallScore = catScores.length > 0
+  const rawScore = catScores.length > 0
     ? catScores.reduce((a, b) => a + b, 0) / catScores.length
     : 0;
+
+  // +5 for a win — winning a set demonstrates adaptability and reads even when
+  // raw metrics don't fully capture it.
+  const winBonus    = setResult === "win" ? 5 : 0;
+  const overallScore = Math.min(100, rawScore + winBonus);
 
   return {
     letter:     scoreToGrade(overallScore),

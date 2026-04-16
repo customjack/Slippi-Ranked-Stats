@@ -63,23 +63,27 @@ CHARACTERS: dict[int, str] = {
 #     avg_kill_percent    — Marth kills at 80–100%; Jiggs kills at 110–140%
 #     avg_death_percent   — weight-dependent; heavier chars survive longer
 #     l_cancel_ratio      — aerial-heavy chars (Fox, Falco, Marth) have more attempts
+#     defensive_option_rate — roll/spotdodge rate; character-agnostic but style-dependent
 #
 #   CROSS-CHARACTER (fair to compare to all players):
 #     neutral_win_ratio   — winning neutral is a universal skill; all chars aim for ~50%+
+#     counter_hit_rate    — punishing opponent attacks; universal read quality signal
 #
 STAT_KEYS = [
     "neutral_win_ratio",
     "openings_per_kill",
     "damage_per_opening",
+    "counter_hit_rate",
+    "defensive_option_rate",
     "l_cancel_ratio",
     "avg_kill_percent",
     "avg_death_percent",
 ]
 
+MIN_MATCHUP_SAMPLES = 20  # minimum samples to include a matchup in by_matchup
+
 # ── Action-state helpers (mirrors slippi-js common.ts / slp_parser.ts) ────────
-# The previous ranges here diverged from the authoritative slippi-js source and
-# caused severe miscounting (e.g. states 0–10 are DYING, not control). The
-# ranges below match src/lib/slp_parser.ts exactly so baseline stats stay
+# The ranges below match src/lib/slp_parser.ts exactly so baseline stats stay
 # consistent with the values the live app computes.
 
 def is_in_control(state: int) -> bool:
@@ -99,6 +103,16 @@ def is_vulnerable(state: int) -> bool:
         (223 <= state <= 232)      # grabbed
     )
 
+def is_attacking(state: int) -> bool:
+    """True when the character is performing an attack (counter-hit detection).
+    Mirrors slp_parser.ts isAttacking(): ground attacks (44–64) + aerial attacks (65–74)
+    + special moves (0xB0–0xB2 = 176–178)."""
+    return (44 <= state <= 74) or (176 <= state <= 178)
+
+# Roll forward (29), roll backward (30), spot dodge (31).
+# Mirrors slp_parser.ts DEFENSIVE_STATES.
+DEFENSIVE_STATES: set[int] = {29, 30, 31}
+
 # ── Stat computation ───────────────────────────────────────────────────────────
 
 def compute_game_stats(game, player_port: int, opp_port: int):
@@ -112,10 +126,16 @@ def compute_game_stats(game, player_port: int, opp_port: int):
     """
     neutral_wins   = 0
     neutral_losses = 0
+    counter_hits   = 0   # subset of neutral_wins where opp was mid-attack
     prev_p_ctrl    = False
     prev_o_ctrl    = False
+    prev_o_state   = -1  # actual previous opponent state for counter-hit detection
     lc_attempts    = 0
     lc_successes   = 0
+
+    # Defensive option tracking (player's rolls + spotdodges)
+    defensive_options      = 0
+    prev_p_action_state    = -1
 
     # Per-stock kill/death percent tracking
     kill_percents:  list[float] = []   # opp % at moment of each kill
@@ -130,6 +150,8 @@ def compute_game_stats(game, player_port: int, opp_port: int):
     total_damage_dealt = 0.0
     damage_this_stock  = 0.0
 
+    frame_count = 0
+
     for frame in game.frames:
         p_data = frame.ports[player_port]
         o_data = frame.ports[opp_port]
@@ -141,14 +163,23 @@ def compute_game_stats(game, player_port: int, opp_port: int):
 
         p_state = int(p_post.state) if p_post.state is not None else 0
         o_state = int(o_post.state) if o_post.state is not None else 0
+        frame_count += 1
 
-        # ── Neutral win/loss transitions ──────────────────────────────────────
+        # ── Neutral win/loss transitions with counter-hit tracking ────────────
         if prev_o_ctrl and is_vulnerable(o_state):
             neutral_wins += 1
+            if is_attacking(prev_o_state):
+                counter_hits += 1
         if prev_p_ctrl and is_vulnerable(p_state):
             neutral_losses += 1
-        prev_p_ctrl = is_in_control(p_state)
-        prev_o_ctrl = is_in_control(o_state)
+        prev_p_ctrl  = is_in_control(p_state)
+        prev_o_ctrl  = is_in_control(o_state)
+        prev_o_state = o_state
+
+        # ── Defensive option tracking (rolls + spotdodges) ────────────────────
+        if p_state in DEFENSIVE_STATES and prev_p_action_state not in DEFENSIVE_STATES:
+            defensive_options += 1
+        prev_p_action_state = p_state
 
         # ── L-cancel tracking ─────────────────────────────────────────────────
         lc = p_post.l_cancel
@@ -193,14 +224,17 @@ def compute_game_stats(game, player_port: int, opp_port: int):
     final_opp_stocks = last_frame.ports[opp_port].leader.post.stocks or 0
     kills         = 4 - final_opp_stocks
     total_neutral = neutral_wins + neutral_losses
+    duration_min  = frame_count / 3600.0  # 60 fps × 60 sec
 
     return {
-        "neutral_win_ratio":  neutral_wins / total_neutral       if total_neutral > 0  else None,
-        "openings_per_kill":  neutral_wins / kills               if kills > 0          else None,
-        "damage_per_opening": total_damage_dealt / neutral_wins  if neutral_wins > 0   else None,
-        "l_cancel_ratio":     lc_successes / lc_attempts         if lc_attempts > 0    else None,
-        "avg_kill_percent":   sum(kill_percents) / len(kill_percents)   if kill_percents   else None,
-        "avg_death_percent":  sum(death_percents) / len(death_percents) if death_percents  else None,
+        "neutral_win_ratio":     neutral_wins / total_neutral            if total_neutral > 0  else None,
+        "openings_per_kill":     neutral_wins / kills                    if kills > 0          else None,
+        "damage_per_opening":    total_damage_dealt / neutral_wins       if neutral_wins > 0   else None,
+        "counter_hit_rate":      counter_hits / neutral_wins             if neutral_wins > 0   else None,
+        "defensive_option_rate": defensive_options / duration_min        if duration_min > 0   else None,
+        "l_cancel_ratio":        lc_successes / lc_attempts              if lc_attempts > 0    else None,
+        "avg_kill_percent":      sum(kill_percents) / len(kill_percents)   if kill_percents     else None,
+        "avg_death_percent":     sum(death_percents) / len(death_percents) if death_percents    else None,
     }
 
 
@@ -341,13 +375,15 @@ def main():
     replays = fetch_replay_list(args.limit)
     total   = len(replays)
 
-    # Two grouping dimensions:
-    #   by_player_char — for character-specific stat comparisons
-    #   by_opponent_char — for opponent-context stat comparisons
-    #   overall — cross-character fallback for universal stats
-    by_player_char:   dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
-    by_opponent_char: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
-    overall:          dict[str, list[float]]             = defaultdict(list)
+    # Three grouping dimensions:
+    #   by_player_char  — character-specific benchmarks (player's own char)
+    #   by_opponent_char — opponent-context benchmarks
+    #   by_matchup      — player_char × opp_char cross-product (most precise)
+    #   overall         — cross-character fallback
+    by_player_char:   dict[str, dict[str, list[float]]]                    = defaultdict(lambda: defaultdict(list))
+    by_opponent_char: dict[str, dict[str, list[float]]]                    = defaultdict(lambda: defaultdict(list))
+    by_matchup:       dict[str, dict[str, dict[str, list[float]]]]          = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    overall:          dict[str, list[float]]                                = defaultdict(list)
 
     processed = 0
     errors    = 0
@@ -373,6 +409,7 @@ def main():
                             continue
                         by_player_char[player_char][key].append(val)
                         by_opponent_char[opp_char][key].append(val)
+                        by_matchup[player_char][opp_char][key].append(val)
                         overall[key].append(val)
                 processed += 1
             elif status == "empty":
@@ -396,6 +433,25 @@ def main():
                 section[char_name][key] = compute_percentiles(char_data[key])
         return section
 
+    def build_matchup_section(accum: dict[str, dict[str, dict[str, list[float]]]]) -> dict:
+        """Build matchup (player_char × opp_char) percentile data.
+        Only includes matchups with >= MIN_MATCHUP_SAMPLES samples so the
+        grading code can trust any entry it finds here."""
+        section: dict = {}
+        for player_char in sorted(accum.keys()):
+            section[player_char] = {}
+            for opp_char in sorted(accum[player_char].keys()):
+                matchup_data = accum[player_char][opp_char]
+                n = max((len(matchup_data[k]) for k in STAT_KEYS if matchup_data[k]), default=0)
+                if n < MIN_MATCHUP_SAMPLES:
+                    continue
+                section[player_char][opp_char] = {"sample_size": n}
+                for key in STAT_KEYS:
+                    section[player_char][opp_char][key] = compute_percentiles(matchup_data[key])
+            if not section[player_char]:
+                del section[player_char]
+        return section
+
     # _overall fallback entry (character-agnostic)
     overall_entry: dict = {"sample_size": processed * 2}
     for key in STAT_KEYS:
@@ -409,8 +465,10 @@ def main():
         "by_player_char":  build_char_section(by_player_char),
         # by_opponent_char: available for future opponent-specific context grading
         "by_opponent_char": build_char_section(by_opponent_char),
+        # by_matchup: player_char × opp_char (most precise; only entries with ≥20 samples)
+        "by_matchup":      build_matchup_section(by_matchup),
     }
-    # Add _overall fallback to both sections
+    # Add _overall fallback to both char sections
     output["by_player_char"]["_overall"]   = overall_entry
     output["by_opponent_char"]["_overall"] = overall_entry
 

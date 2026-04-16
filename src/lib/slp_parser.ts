@@ -93,6 +93,8 @@ interface StreamResult {
   stockPercents: Record<number, number[]>;
   // Total button-state changes per port (for inputs/min)
   inputCounts: Record<number, number>;
+  // Count of roll/spotdodge uses per port (defensive option rate)
+  defensiveOptions: Record<number, number>;
 }
 
 // ── Action-state helpers (mirrors slippi-js common.ts) ─────────────────────
@@ -112,6 +114,15 @@ function isVulnerable(s: number): boolean {
       || (s >= 223 && s <= 232); // grabbed/command-grabbed
 }
 
+/** Attack states: opponent was mid-attack when we opened them (counter-hit detection). */
+function isAttacking(s: number): boolean {
+  return (s >= 44 && s <= 74)    // ground attacks (44–64) + aerial attacks (65–74)
+      || (s === 0xB0 || s === 0xB1 || s === 0xB2); // special moves
+}
+
+/** Defensive option states: roll forward (29), roll backward (30), spot dodge (31). */
+const DEFENSIVE_STATES = new Set([29, 30, 31]);
+
 /** Compute conversion-based stats from ordered action state frames. */
 function computeConversionStats(
   playerPort: number,
@@ -119,7 +130,7 @@ function computeConversionStats(
   actionFrames: Record<number, [number, number][]>,
   totalDamageTaken: Record<number, number>,
   finalStocks: Record<number, number>
-): { openings_per_kill: number | null; neutral_win_ratio: number | null; damage_per_opening: number | null } {
+): { openings_per_kill: number | null; neutral_win_ratio: number | null; damage_per_opening: number | null; counter_hit_rate: number | null } {
   const pFrames = actionFrames[playerPort] ?? [];
   const oFrames = actionFrames[oppPort] ?? [];
 
@@ -129,9 +140,11 @@ function computeConversionStats(
 
   let neutralWins = 0;   // times we put opponent into vulnerable state from control
   let neutralLosses = 0; // times opponent put us into vulnerable state from control
+  let counterHits = 0;   // subset of neutralWins where opponent was mid-attack
 
   let prevPlayerCtrl = false;
-  let prevOppCtrl = false;
+  let prevOppCtrl    = false;
+  let prevOppState   = -1; // actual previous opponent state for counter-hit detection
 
   // Iterate player frames (same frame set as opponent in a 1v1)
   for (const [frame, playerState] of pFrames) {
@@ -142,22 +155,27 @@ function computeConversionStats(
     const oppCtrl    = isInControl(oppState);
 
     // Opponent transitions: was in control → now vulnerable = we opened them up
-    if (prevOppCtrl && isVulnerable(oppState)) neutralWins++;
+    if (prevOppCtrl && isVulnerable(oppState)) {
+      neutralWins++;
+      if (isAttacking(prevOppState)) counterHits++; // counter hit: punished their attack
+    }
     // Player transitions: was in control → now vulnerable = they opened us up
     if (prevPlayerCtrl && isVulnerable(playerState)) neutralLosses++;
 
     prevPlayerCtrl = playerCtrl;
     prevOppCtrl    = oppCtrl;
+    prevOppState   = oppState;
   }
 
-  const kills      = 4 - (finalStocks[oppPort] ?? 0);
+  const kills        = 4 - (finalStocks[oppPort] ?? 0);
   const totalNeutral = neutralWins + neutralLosses;
-  const dmgDealt   = totalDamageTaken[oppPort] ?? 0;
+  const dmgDealt     = totalDamageTaken[oppPort] ?? 0;
 
   return {
     openings_per_kill:  kills > 0         ? neutralWins / kills         : null,
     neutral_win_ratio:  totalNeutral > 0  ? neutralWins / totalNeutral  : null,
     damage_per_opening: neutralWins > 0   ? dmgDealt    / neutralWins   : null,
+    counter_hit_rate:   neutralWins > 0   ? counterHits / neutralWins   : null,
   };
 }
 
@@ -204,6 +222,8 @@ function parseEventStream(data: Uint8Array): StreamResult {
   const prevPercentsTrack: Record<number, number> = {};
   const inputCounts: Record<number, number> = {};
   const prevButtons: Record<number, number> = {};
+  const defensiveOptions: Record<number, number> = {};
+  const prevActionState: Record<number, number> = {};
   let durationFrames = 0;
 
   while (pos < eventsEnd) {
@@ -256,6 +276,14 @@ function parseEventStream(data: Uint8Array): StreamResult {
             }
           }
 
+          // Defensive option: count each new entry into a roll/spotdodge state.
+          // Detect transitions (not sustained frames) to avoid counting the full
+          // duration of a roll as multiple uses.
+          if (DEFENSIVE_STATES.has(actionState) && !DEFENSIVE_STATES.has(prevActionState[port] ?? -1)) {
+            defensiveOptions[port] = (defensiveOptions[port] ?? 0) + 1;
+          }
+          prevActionState[port] = actionState;
+
           // Stock transition: record percent at the frame before a stock was lost,
           // and bank the peak damage this life into the per-port total.
           if (prevStocksTrack[port] !== undefined && stocks < prevStocksTrack[port]) {
@@ -303,7 +331,7 @@ function parseEventStream(data: Uint8Array): StreamResult {
     totalDamageTaken[port] = (totalDamageTaken[port] ?? 0) + (damageThisStock[port] ?? 0);
   }
 
-  return { matchId, stageId, gameEndMethod, lrasInitiator, finalStocks, totalDamageTaken, durationFrames, actionFrames, lCancelSuccesses, lCancelAttempts, stockPercents, inputCounts };
+  return { matchId, stageId, gameEndMethod, lrasInitiator, finalStocks, totalDamageTaken, durationFrames, actionFrames, lCancelSuccesses, lCancelAttempts, stockPercents, inputCounts, defensiveOptions };
 }
 
 // ── Metadata parser ────────────────────────────────────────────────────────
@@ -386,10 +414,12 @@ export interface ParsedGameRow {
   openings_per_kill: number | null;
   damage_per_opening: number | null;
   neutral_win_ratio: number | null;
+  counter_hit_rate: number | null;
   inputs_per_minute: number | null;
   l_cancel_ratio: number | null;
   avg_kill_percent: number | null;
   avg_death_percent: number | null;
+  defensive_option_rate: number | null;  // inverted: lower = better (fewer rolls/spotdodges/min)
 }
 
 const METHOD_GAME = 2;
@@ -489,6 +519,7 @@ export function parseSlpBytes(
     openings_per_kill:  convStats.openings_per_kill,
     damage_per_opening: convStats.damage_per_opening,
     neutral_win_ratio:  convStats.neutral_win_ratio,
+    counter_hit_rate:   convStats.counter_hit_rate,
     inputs_per_minute: (() => {
       const inputs = stream.inputCounts[playerPort] ?? 0;
       const mins   = stream.durationFrames / 3600;
@@ -506,6 +537,11 @@ export function parseSlpBytes(
     avg_death_percent: (() => {
       const percents = stream.stockPercents[playerPort] ?? [];
       return percents.length > 0 ? percents.reduce((a, b) => a + b, 0) / percents.length : null;
+    })(),
+    defensive_option_rate: (() => {
+      const opts = stream.defensiveOptions[playerPort] ?? 0;
+      const mins = stream.durationFrames / 3600;
+      return mins > 0 ? opts / mins : null;
     })(),
   }];
 }

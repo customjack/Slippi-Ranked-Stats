@@ -63,10 +63,12 @@ export interface LiveGameStats {
   openings_per_kill: number | null;
   damage_per_opening: number | null;
   neutral_win_ratio: number | null;
+  counter_hit_rate: number | null;
   inputs_per_minute: number | null;
   l_cancel_ratio: number | null;
   avg_kill_percent: number | null;
   avg_death_percent: number | null;
+  defensive_option_rate: number | null;
   duration_frames: number;
   stage_id: number;
   player_char_id: number;

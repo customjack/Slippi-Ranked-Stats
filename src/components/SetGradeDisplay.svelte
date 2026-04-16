@@ -31,7 +31,9 @@
           {grade.setResult === "win" ? "Win" : "Loss"}
         </span>
         {grade.wins}–{grade.losses}
-        {#if grade.baselineSource === "overall"}
+        {#if grade.baselineSource === "matchup"}
+          <span style="opacity: 0.6"> · matchup baseline</span>
+        {:else if grade.baselineSource === "overall"}
           <span style="opacity: 0.6"> · overall baseline</span>
         {/if}
       </div>

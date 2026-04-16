@@ -15,8 +15,8 @@ builds tree-shake the entire feature out — visible only when running
 ### What's built
 
 - **`src/lib/grading.ts`** — `gradeSet(games, playerChar, opponentChar, setResult, wins, losses)` returns a `SetGrade` with overall letter/score, four category grades (Neutral, Punish, Defense, Execution), and per-stat breakdowns. Categories are equally weighted; stats within a category are equally weighted.
-- **`src/lib/grade-benchmarks.ts`** — Generated from `scripts/grade_baselines.json`. Per-character percentile thresholds (P5/P10/P25/P50/P75/P90/P95) for each stat. Characters with fewer than 20 samples in the baseline fall back to the `_overall` bucket.
-- **`src/components/SetGradeDisplay.svelte`** — Renders the overall grade card + category rows. Iterates `CATEGORY_DEFS` from grading.ts so display always matches the grading logic.
+- **`src/lib/grade-benchmarks.ts`** — Generated from `scripts/grade_baselines.json`. Three-tier benchmark structure: `by_matchup[playerChar][oppChar]` → `by_player_char[playerChar]` → `by_player_char["_overall"]`. Characters with fewer than 20 samples fall back to the next tier.
+- **`src/components/SetGradeDisplay.svelte`** — Renders the overall grade card + category rows. Iterates `CATEGORY_DEFS` from grading.ts so display always matches the grading logic. Shows "matchup baseline" / "overall baseline" annotation when applicable.
 - **Watcher integration** (`src/lib/watcher.ts`, `handleRankedGame`) — When a set completes during a live watcher session, calls `gradeSet` against in-memory `liveGameStats` and writes the result to `lastSetGrade`. Gated by `import.meta.env.DEV`.
 - **Dev test panel** (`src/components/tabs/LiveRankedSession.svelte`) — Yellow card at the top of the **Live Ranked Session** tab. Picks any of the last 100 completed sets from a dropdown, re-parses each game's .slp file, runs `gradeSet`, and renders `SetGradeDisplay`. Only way to test grading without playing a full ranked set, because:
   - The `games` SQL table only stores metadata (filepath, char IDs, result, etc.)
@@ -25,14 +25,32 @@ builds tree-shake the entire feature out — visible only when running
 
 ### How grading works
 
-For each stat in a completed set, `percentileScore(value, thresholds, inverted)` linearly interpolates between bench percentiles to produce a 0–100 score. `INVERTED_STATS` (currently `openings_per_kill`, `avg_kill_percent`) are scored where lower = better. Letter grade thresholds: S ≥ 95, A ≥ 90, B ≥ 75, C ≥ 50, D ≥ 25, F < 25.
+For each stat in a completed set, `percentileScore(value, thresholds, inverted)` linearly interpolates between bench percentiles to produce a 0–100 score. Letter grade thresholds: S ≥ 95, A ≥ 90, B ≥ 75, C ≥ 50, D ≥ 25, F < 25.
+
+**Algorithm details (as of current session):**
+- `INVERTED_STATS`: `openings_per_kill`, `avg_kill_percent`, `defensive_option_rate` (lower = better)
+- `avg_kill_percent` and `avg_death_percent` are **skipped** when `baselineSource === "overall"` — the `_overall` bucket has identical values for both by symmetric pooling, making scores misleading. Only scored with character-specific data.
+- **Win bonus**: +5 added to the composite score for a set win (capped at 100). Winning a set reflects adaptability and reads not captured by raw metrics.
+- **Benchmark lookup**: matchup (player × opp) → player char → `_overall`. The display shows which tier was used.
+
+**Stats by category:**
+| Category  | Stats                                                          |
+|-----------|----------------------------------------------------------------|
+| Neutral   | `neutral_win_ratio`, `counter_hit_rate`                        |
+| Punish    | `damage_per_opening`, `openings_per_kill`, `avg_kill_percent`  |
+| Defense   | `avg_death_percent`, `defensive_option_rate`                   |
+| Execution | `l_cancel_ratio`, `inputs_per_minute`                          |
+
+**New stats added (placeholder baselines, real data pending):**
+- `counter_hit_rate` — % of neutral wins where opponent was mid-attack when opened. Measures neutral read quality. Tracked in `slp_parser.ts` via `isAttacking()`: states 44–74 (ground+aerial attacks) + 0xB0–0xB2 (specials).
+- `defensive_option_rate` — player's roll/spotdodge uses per minute (inverted). Tracked via transitions into states 29 (roll fwd), 30 (roll back), 31 (spotdodge). Fewer = better defensive decision-making.
+- `inputs_per_minute` — still a placeholder for community baseline (py-slippi can't compute it). IPM should use `by_player_char` thresholds once available, as Fox/Falco naturally play with 2-3× the IPM of Marth/Puff.
 
 ### Open issues before shipping
 
-1. ~~Low per-char sample sizes~~ **Resolved.** 5k SlippiLab pull landed (4951 successful, 45 errors, 4 skips). 24 chars now have ≥20 samples (was 13). Only Mr. Game & Watch (16) still falls back to `_overall`. Regenerate via `python3 scripts/regen_benchmarks.py`.
+1. ~~Low per-char sample sizes~~ **Resolved.** 5k SlippiLab pull landed (4951 successful, 45 errors, 4 skips). 24 chars now have ≥20 samples (was 13). Only Mr. Game & Watch (16) still falls back to `_overall`. `grade-benchmarks.ts` regenerated with new `by_player_char`/`by_matchup` structure; `counter_hit_rate` and `defensive_option_rate` use placeholders until next fetch run (both stats now tracked by the fetch script).
 2. **`inputs_per_minute` placeholder** — py-slippi's frame API doesn't surface pre-frame button bytes. The in-app TS parser computes IPM live from pre-frame event 0x37, but no community baseline exists. Either port input-counting to Python or derive a baseline from accumulated user data.
-3. **`_overall` kill% == death%** — identical by symmetry when both ports of a 1v1 are pooled. Per-char values diverge correctly. Chars falling back to `_overall` get identical raw thresholds for kill/death% (scored in opposite directions, so still produces a signal).
-4. **Grade history persistence — proposed, not built.** Add a `set_grades` SQL table keyed by `match_id` storing overall letter/score, per-category scores, per-stat values + scores, `baseline_version`, and `generated_at`. Insert from `watcher.ts` `handleRankedGame` when grading runs; optionally insert from the dev test panel too. Surfaces as a future history view. Discuss approach before building.
+3. **Grade history persistence — proposed, not built.** Add a `set_grades` SQL table keyed by `match_id` storing overall letter/score, per-category scores, per-stat values + scores, `baseline_version`, and `generated_at`. Insert from `watcher.ts` `handleRankedGame` when grading runs; optionally insert from the dev test panel too. Surfaces as a **premium-only** Grade History tab. Build after grading is calibrated (wait for 5k baseline regeneration).
 
 ---
 
@@ -42,24 +60,32 @@ Three Python scripts build the percentile benchmarks consumed by the in-app grad
 
 ### `scripts/fetch_slippilab_replays.py`
 
-Pulls 1v1 replays from the SlippiLab public API, parses each one with py-slippi, computes the same stats the in-app TS parser computes, and writes `scripts/grade_baselines.json` (P5/P10/P25/P50/P75/P90/P95 for each stat, grouped by player char, opponent char, and `_overall`).
+Pulls 1v1 replays from the SlippiLab public API, parses each one with py-slippi, computes the same stats the in-app TS parser computes, and writes `scripts/grade_baselines.json`.
+
+Output structure:
+- `by_player_char[char][stat]` — percentiles for each player character
+- `by_opponent_char[char][stat]` — percentiles vs each opponent character
+- `by_matchup[playerChar][oppChar][stat]` — matchup-specific percentiles (only entries with ≥20 samples)
 
 ```bash
 python3 -u scripts/fetch_slippilab_replays.py --limit 5000 --workers 4 --output scripts/grade_baselines.json
 ```
 
-- `--workers` defaults to 4. `ProcessPoolExecutor` parallelizes download + parse + stat compute. Bump higher if network/CPU has headroom.
+- `--workers` defaults to 4. `ProcessPoolExecutor` parallelizes download + parse + stat compute.
 - Download URL must use `file_name` (UUID.slp), not numeric `id` — `/api/replay/{id}` 404s.
-- Action-state ranges (`is_in_control`, `is_vulnerable`) are kept identical to `src/lib/slp_parser.ts` to avoid the divergence bug that previously inflated `damage_per_opening` (resolved in `d08339d`).
-- Logs to `scripts/logs/` (gitignored).
+- Action-state helpers (`is_in_control`, `is_vulnerable`, `is_attacking`, `DEFENSIVE_STATES`) are kept identical to `src/lib/slp_parser.ts`.
+
+### `scripts/baseline_generator.py`
+
+Alternative script that reads from the user's local SQLite DB instead of SlippiLab. Useful for generating personal baselines. Outputs same `by_player_char` + `by_matchup` structure as the fetch script.
 
 ### `scripts/global_baseline_parser.py`
 
-Streams a hypothetical 140 GB JSON dump of global Slippi match data using `ijson` (constant memory) and overwrites `scripts/grade_baselines.json`. Code-complete and aligned with the dual-grouping schema (`by_player_char` + `by_opponent_char` + `_overall`). **Do not execute** until the JSON format is confirmed.
+Streams a hypothetical 140 GB JSON dump of global Slippi match data using `ijson` (constant memory). **Do not execute** until the JSON format is confirmed.
 
 ### `scripts/regen_benchmarks.py`
 
-Reads `scripts/grade_baselines.json` and emits `src/lib/grade-benchmarks.ts`. Run after every fresh fetch. Filters baked in: skip `Unknown_*` buckets (parser couldn't map the internal char ID), skip chars with fewer than 20 samples, always include `_overall`. Carries `inputs_per_minute` forward as a placeholder.
+Reads `scripts/grade_baselines.json` and emits `src/lib/grade-benchmarks.ts`. Run after every fresh fetch. Filters baked in: skip `Unknown_*` buckets (parser couldn't map the internal char ID), skip chars with fewer than 20 samples, always include `_overall`. Handles the `by_matchup` structure and new stat keys (`counter_hit_rate`, `defensive_option_rate`); carries `inputs_per_minute` forward as a placeholder.
 
 ```bash
 python3 scripts/regen_benchmarks.py
