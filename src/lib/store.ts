@@ -69,6 +69,17 @@ export interface LiveGameStats {
   avg_kill_percent: number | null;
   avg_death_percent: number | null;
   defensive_option_rate: number | null;
+  opening_conversion_rate: number | null;
+  stage_control_ratio:     number | null;
+  lead_maintenance_rate:   number | null;
+  tech_chase_rate:         number | null;
+  edgeguard_success_rate:  number | null;
+  hit_advantage_rate:      number | null;
+  recovery_success_rate:   number | null;
+  avg_stock_duration:      number | null;
+  respawn_defense_rate:    number | null;
+  comeback_rate:           number | null;
+  wavedash_miss_rate:      number | null;
   duration_frames: number;
   stage_id: number;
   player_char_id: number;
@@ -89,6 +100,26 @@ export const setResultFlash = writable<SetResultFlash | null>(null);
 
 // ── Dev-only: set grading (not shipped until personally vetted) ───────────
 export const lastSetGrade = writable<SetGrade | null>(null);
+
+// ── Grade history (persists for the app session, reset on reload) ──────────
+
+export interface GradeHistoryEntry {
+  matchId:      string;
+  timestamp:    string;   // ISO string from the set, used for sort order
+  date:         string;
+  opponentCode: string;
+  opponentChar: string;
+  playerChar:   string;
+  result:       "win" | "loss";
+  wins:         number;
+  losses:       number;
+  grade:        SetGrade | null;
+  error:        string | null;
+}
+
+export const gradeHistory         = writable<GradeHistoryEntry[]>([]);
+export const gradeHistoryBusy     = writable<boolean>(false);
+export const gradeHistoryProgress = writable<{ current: number; total: number }>({ current: 0, total: 0 });
 
 // ── Derived: filtered games by date range ─────────────────────────────────
 

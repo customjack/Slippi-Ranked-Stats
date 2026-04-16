@@ -73,6 +73,15 @@ function parseUbjson(data: Uint8Array, startPos: number): [unknown, number] {
 
 // ── Event stream parser ────────────────────────────────────────────────────
 
+interface FrameSnapshot {
+  frame: number;
+  state: number;
+  x: number;
+  y: number;
+  percent: number;
+  stocks: number;
+}
+
 interface StreamResult {
   matchId: string;
   stageId: number;
@@ -86,7 +95,9 @@ interface StreamResult {
   durationFrames: number;
   // ordered action state per port: [frameNum, actionState][]
   actionFrames: Record<number, [number, number][]>;
-  // L-cancel tracking (replay spec v2.1.0+): byte 35 of post-frame payload
+  // Per-frame snapshots (state, x, y, percent, stocks) used for advanced stats
+  frameData: Record<number, FrameSnapshot[]>;
+  // L-cancel tracking (replay spec v3.0.0+): offset 0x31 of post-frame payload
   lCancelSuccesses: Record<number, number>;
   lCancelAttempts: Record<number, number>;
   // Per-port percent at each stock loss (for avg kill/death percent)
@@ -123,43 +134,85 @@ function isAttacking(s: number): boolean {
 /** Defensive option states: roll forward (29), roll backward (30), spot dodge (31). */
 const DEFENSIVE_STATES = new Set([29, 30, 31]);
 
+/** Grounded-knockdown / tech states (0xB7–0xCC) where tech-chase opportunities arise. */
+function isKnockdown(s: number): boolean {
+  return (s >= 183 && s <= 204); // down-bound, down-wait, tech, get-up family
+}
+
 /** Compute conversion-based stats from ordered action state frames. */
 function computeConversionStats(
   playerPort: number,
   oppPort: number,
   actionFrames: Record<number, [number, number][]>,
   totalDamageTaken: Record<number, number>,
-  finalStocks: Record<number, number>
-): { openings_per_kill: number | null; neutral_win_ratio: number | null; damage_per_opening: number | null; counter_hit_rate: number | null } {
+  finalStocks: Record<number, number>,
+  frameData: Record<number, FrameSnapshot[]>,
+): {
+  openings_per_kill: number | null;
+  neutral_win_ratio: number | null;
+  damage_per_opening: number | null;
+  counter_hit_rate: number | null;
+  opening_conversion_rate: number | null;
+} {
   const pFrames = actionFrames[playerPort] ?? [];
   const oFrames = actionFrames[oppPort] ?? [];
 
-  // Build per-frame lookup for the opponent so we can access both ports by frame
   const oByFrame = new Map<number, number>();
   for (const [f, s] of oFrames) oByFrame.set(f, s);
 
-  let neutralWins = 0;   // times we put opponent into vulnerable state from control
-  let neutralLosses = 0; // times opponent put us into vulnerable state from control
-  let counterHits = 0;   // subset of neutralWins where opponent was mid-attack
+  // Build per-frame percent + stocks lookup from frameData for conversion tracking
+  const oppSnapByFrame = new Map<number, FrameSnapshot>();
+  for (const snap of frameData[oppPort] ?? []) oppSnapByFrame.set(snap.frame, snap);
+
+  let neutralWins = 0;
+  let neutralLosses = 0;
+  let counterHits = 0;
+
+  // Opening conversion: track percent at opening start, compare when opp resets
+  const CONVERSION_DMG = 20;
+  let openingStartPercent = -1;
+  let openingStartStocks  = -1;
+  let openings    = 0;
+  let conversions = 0;
 
   let prevPlayerCtrl = false;
   let prevOppCtrl    = false;
-  let prevOppState   = -1; // actual previous opponent state for counter-hit detection
+  let prevOppState   = -1;
 
-  // Iterate player frames (same frame set as opponent in a 1v1)
   for (const [frame, playerState] of pFrames) {
     const oppState = oByFrame.get(frame);
     if (oppState === undefined) continue;
 
     const playerCtrl = isInControl(playerState);
     const oppCtrl    = isInControl(oppState);
+    const oppSnap    = oppSnapByFrame.get(frame);
+    const oppPct     = oppSnap?.percent ?? -1;
+    const oppStocks  = oppSnap?.stocks  ?? -1;
 
     // Opponent transitions: was in control → now vulnerable = we opened them up
     if (prevOppCtrl && isVulnerable(oppState)) {
       neutralWins++;
-      if (isAttacking(prevOppState)) counterHits++; // counter hit: punished their attack
+      if (isAttacking(prevOppState)) counterHits++;
+      openings++;
+      openingStartPercent = oppPct;
+      openingStartStocks  = oppStocks;
     }
-    // Player transitions: was in control → now vulnerable = they opened us up
+
+    // Opponent back in control → opening ended, measure damage taken
+    if (openingStartPercent >= 0 && oppCtrl) {
+      const dmg = oppPct - openingStartPercent;
+      if (oppStocks < openingStartStocks || dmg >= CONVERSION_DMG) conversions++;
+      openingStartPercent = -1;
+      openingStartStocks  = -1;
+    }
+
+    // Opponent died mid-opening (percent resets on respawn)
+    if (openingStartStocks >= 0 && oppStocks >= 0 && oppStocks < openingStartStocks) {
+      conversions++;
+      openingStartPercent = -1;
+      openingStartStocks  = -1;
+    }
+
     if (prevPlayerCtrl && isVulnerable(playerState)) neutralLosses++;
 
     prevPlayerCtrl = playerCtrl;
@@ -172,10 +225,187 @@ function computeConversionStats(
   const dmgDealt     = totalDamageTaken[oppPort] ?? 0;
 
   return {
-    openings_per_kill:  kills > 0         ? neutralWins / kills         : null,
-    neutral_win_ratio:  totalNeutral > 0  ? neutralWins / totalNeutral  : null,
-    damage_per_opening: neutralWins > 0   ? dmgDealt    / neutralWins   : null,
-    counter_hit_rate:   neutralWins > 0   ? counterHits / neutralWins   : null,
+    openings_per_kill:       kills > 0        ? neutralWins / kills        : null,
+    neutral_win_ratio:       totalNeutral > 0 ? neutralWins / totalNeutral : null,
+    damage_per_opening:      neutralWins > 0  ? dmgDealt    / neutralWins  : null,
+    counter_hit_rate:        neutralWins > 0  ? counterHits / neutralWins  : null,
+    opening_conversion_rate: openings > 0     ? conversions / openings     : null,
+  };
+}
+
+/** Compute position- and timing-based stats. */
+function computeAdvancedStats(
+  playerPort: number,
+  oppPort: number,
+  frameData: Record<number, FrameSnapshot[]>,
+  result: "win" | "loss",
+): {
+  stage_control_ratio:    number | null;
+  tech_chase_rate:        number | null;
+  edgeguard_success_rate: number | null;
+  recovery_success_rate:  number | null;
+  hit_advantage_rate:     number | null;
+  avg_stock_duration:     number | null;
+  respawn_defense_rate:   number | null;
+  comeback_rate:          number | null;
+  lead_maintenance_rate:  number | null;
+  wavedash_miss_rate:     number | null;
+} {
+  const playerFrames = frameData[playerPort] ?? [];
+  const oppByFrame   = new Map<number, FrameSnapshot>();
+  for (const snap of frameData[oppPort] ?? []) oppByFrame.set(snap.frame, snap);
+
+  const NULL_RESULT = {
+    stage_control_ratio: null, tech_chase_rate: null, edgeguard_success_rate: null,
+    recovery_success_rate: null, hit_advantage_rate: null, avg_stock_duration: null,
+    respawn_defense_rate: null, comeback_rate: null, lead_maintenance_rate: null,
+    wavedash_miss_rate: null,
+  };
+  if (playerFrames.length === 0) return NULL_RESULT;
+
+  const STAGE_CENTER   = 40;
+  const OFFSTAGE_Y     = -5;
+  const RETURN_Y       =  5;
+  const EG_WINDOW      = 180; // 3 s
+  const TC_WINDOW      =  45; // 0.75 s
+  const TC_HIT_DMG     =   3;
+  const RESPAWN_WINDOW = 150; // 2.5 s
+  const JUMP_STATES    = new Set([24, 25]); // JumpF, JumpB
+  const AIRDODGE       = 235; // EscapeAir
+  const WD_LAND        = 189; // LandingFallSpecial (wavedash landing)
+  const WD_JUMP_Y      =   5;
+  const WD_DODGE_F     =   4;
+  const WD_LAND_F      =   4;
+
+  let centerFrames = 0;
+
+  let techSit = 0; let techHit = 0;
+  let tcFrame = -1; let tcPct  = -1;
+  let prevOppKD = false;
+
+  let egSit = 0; let egSuccess = 0;
+  let egFrame = -1; let egStocks = -1;
+  let prevOppY = 999;
+
+  let recSit = 0; let recSuccess = 0;
+  let recFrame = -1; let recStocks = -1;
+  let prevPY = 999;
+
+  let oppVulnFrames = 0;
+  let atkDuringVuln = 0;
+
+  const stockDurations: number[] = [];
+  let stockStart    = playerFrames[0].frame;
+  let prevPStocks   = playerFrames[0].stocks;
+
+  let respawnSit = 0; let respawnSuccess = 0;
+  let respawnEnd = -1; let respawnPct = -1;
+  let prevOppStocksR = -1;
+
+  let wasEverDown = false;
+  let wasEverUp   = false;
+
+  let wdAttempts = 0; let wdSuccesses = 0;
+  let jumpFrame  = -1; let dodgeFrame  = -1;
+  let prevPState = -1;
+
+  for (const snap of playerFrames) {
+    const opp = oppByFrame.get(snap.frame);
+
+    // ── Stage control ──────────────────────────────────────────────────────
+    if (Math.abs(snap.x) < STAGE_CENTER) centerFrames++;
+
+    // ── Stock duration ─────────────────────────────────────────────────────
+    if (snap.stocks < prevPStocks) {
+      stockDurations.push(snap.frame - stockStart);
+      stockStart = snap.frame;
+    }
+    prevPStocks = snap.stocks;
+
+    if (opp) {
+      // ── Comeback / lead maintenance ────────────────────────────────────
+      if (snap.stocks < opp.stocks) wasEverDown = true;
+      if (snap.stocks > opp.stocks) wasEverUp   = true;
+
+      // ── Hit advantage rate ─────────────────────────────────────────────
+      if (isVulnerable(opp.state)) {
+        oppVulnFrames++;
+        if (isAttacking(snap.state)) atkDuringVuln++;
+      }
+
+      // ── Tech chase ─────────────────────────────────────────────────────
+      const oppKD = isKnockdown(opp.state);
+      if (!prevOppKD && oppKD) { techSit++; tcFrame = snap.frame; tcPct = opp.percent; }
+      if (tcFrame >= 0) {
+        if (snap.frame > tcFrame + TC_WINDOW)      { tcFrame = -1; }
+        else if (opp.percent > tcPct + TC_HIT_DMG) { techHit++; tcFrame = -1; }
+      }
+      prevOppKD = oppKD;
+
+      // ── Edgeguard ──────────────────────────────────────────────────────
+      const oppOff = opp.y < OFFSTAGE_Y;
+      if (egFrame < 0 && oppOff && prevOppY >= OFFSTAGE_Y) { egSit++; egFrame = snap.frame; egStocks = opp.stocks; }
+      if (egFrame >= 0) {
+        if (opp.stocks < egStocks)                    { egSuccess++; egFrame = -1; }
+        else if (opp.y > RETURN_Y)                    {              egFrame = -1; }
+        else if (snap.frame > egFrame + EG_WINDOW)    {              egFrame = -1; }
+      }
+      prevOppY = opp.y;
+
+      // ── Respawn defense ────────────────────────────────────────────────
+      if (prevOppStocksR >= 0 && opp.stocks < prevOppStocksR) {
+        respawnSit++;
+        respawnEnd = snap.frame + RESPAWN_WINDOW;
+        respawnPct = snap.percent;
+      }
+      if (respawnEnd >= 0) {
+        if (snap.percent > respawnPct + 5)         { respawnEnd = -1; }
+        else if (snap.frame > respawnEnd)           { respawnSuccess++; respawnEnd = -1; }
+      }
+      prevOppStocksR = opp.stocks;
+    }
+
+    // ── Recovery ───────────────────────────────────────────────────────────
+    const pOff = snap.y < OFFSTAGE_Y;
+    if (recFrame < 0 && pOff && prevPY >= OFFSTAGE_Y) { recSit++; recFrame = snap.frame; recStocks = snap.stocks; }
+    if (recFrame >= 0) {
+      if (snap.stocks < recStocks)                  {               recFrame = -1; }
+      else if (snap.y > RETURN_Y)                   { recSuccess++; recFrame = -1; }
+      else if (snap.frame > recFrame + EG_WINDOW)   {               recFrame = -1; }
+    }
+    prevPY = snap.y;
+
+    // ── Wavedash miss rate ─────────────────────────────────────────────────
+    if (snap.state !== prevPState) {
+      if (JUMP_STATES.has(snap.state) && snap.y < WD_JUMP_Y) {
+        jumpFrame = snap.frame; dodgeFrame = -1;
+      } else if (snap.state === AIRDODGE && jumpFrame >= 0 && snap.frame <= jumpFrame + WD_DODGE_F) {
+        wdAttempts++; dodgeFrame = snap.frame; jumpFrame = -1;
+      } else if (snap.state === WD_LAND && dodgeFrame >= 0 && snap.frame <= dodgeFrame + WD_LAND_F) {
+        wdSuccesses++; dodgeFrame = -1;
+      }
+    }
+    if (jumpFrame  >= 0 && snap.frame > jumpFrame  + WD_DODGE_F + 1) jumpFrame  = -1;
+    if (dodgeFrame >= 0 && snap.frame > dodgeFrame + WD_LAND_F  + 1) dodgeFrame = -1;
+    prevPState = snap.state;
+  }
+
+  // If player never died, full game counts as one stock life
+  if (stockDurations.length === 0) {
+    stockDurations.push(playerFrames.at(-1)!.frame - playerFrames[0].frame);
+  }
+
+  return {
+    stage_control_ratio:    centerFrames / playerFrames.length,
+    tech_chase_rate:        techSit      > 0 ? techHit      / techSit      : null,
+    edgeguard_success_rate: egSit        > 0 ? egSuccess    / egSit        : null,
+    recovery_success_rate:  recSit       > 0 ? recSuccess   / recSit       : null,
+    hit_advantage_rate:     oppVulnFrames > 0 ? atkDuringVuln / oppVulnFrames : null,
+    avg_stock_duration:     stockDurations.reduce((a, b) => a + b, 0) / stockDurations.length,
+    respawn_defense_rate:   respawnSit   > 0 ? respawnSuccess / respawnSit : null,
+    comeback_rate:          wasEverDown ? (result === "win" ? 1 : 0) : null,
+    lead_maintenance_rate:  wasEverUp   ? (result === "win" ? 1 : 0) : null,
+    wavedash_miss_rate:     wdAttempts   > 0 ? (wdAttempts - wdSuccesses) / wdAttempts : null,
   };
 }
 
@@ -224,6 +454,7 @@ function parseEventStream(data: Uint8Array): StreamResult {
   const prevButtons: Record<number, number> = {};
   const defensiveOptions: Record<number, number> = {};
   const prevActionState: Record<number, number> = {};
+  const frameData: Record<number, FrameSnapshot[]> = {};
   let durationFrames = 0;
 
   while (pos < eventsEnd) {
@@ -256,20 +487,24 @@ function parseEventStream(data: Uint8Array): StreamResult {
         const port = data[ps + 4];
         const isFollower = data[ps + 5];
         if (!isFollower && port <= 3) {
-          const frameNum = view.getInt32(ps, false);
+          const frameNum    = view.getInt32(ps, false);
           const actionState = view.getUint16(ps + 7, false);
-          const stocks = data[ps + 32];
-          const percent = view.getFloat32(ps + 21, false);
+          const stocks      = data[ps + 32];
+          const percent     = view.getFloat32(ps + 21, false);
+          const x           = view.getFloat32(ps + 9,  false);
+          const y           = view.getFloat32(ps + 13, false);
 
           finalStocks[port] = stocks;
           if (frameNum > durationFrames) durationFrames = frameNum;
           if (!actionFrames[port]) actionFrames[port] = [];
           actionFrames[port].push([frameNum, actionState]);
+          if (!frameData[port]) frameData[port] = [];
+          frameData[port].push({ frame: frameNum, state: actionState, x, y, percent, stocks });
 
-          // L-cancel status byte at offset 35 (added in replay spec v2.1.0)
+          // L-cancel status at offset 0x31 = 49 (added in replay spec v3.0.0)
           // 0x01 = success, 0x02 = failure; 0x00 = no attempt this frame
-          if (size >= 36) {
-            const lcStatus = data[ps + 35];
+          if (size >= 50) {
+            const lcStatus = data[ps + 49];
             if (lcStatus === 1 || lcStatus === 2) {
               lCancelAttempts[port] = (lCancelAttempts[port] ?? 0) + 1;
               if (lcStatus === 1) lCancelSuccesses[port] = (lCancelSuccesses[port] ?? 0) + 1;
@@ -331,7 +566,7 @@ function parseEventStream(data: Uint8Array): StreamResult {
     totalDamageTaken[port] = (totalDamageTaken[port] ?? 0) + (damageThisStock[port] ?? 0);
   }
 
-  return { matchId, stageId, gameEndMethod, lrasInitiator, finalStocks, totalDamageTaken, durationFrames, actionFrames, lCancelSuccesses, lCancelAttempts, stockPercents, inputCounts, defensiveOptions };
+  return { matchId, stageId, gameEndMethod, lrasInitiator, finalStocks, totalDamageTaken, durationFrames, actionFrames, frameData, lCancelSuccesses, lCancelAttempts, stockPercents, inputCounts, defensiveOptions };
 }
 
 // ── Metadata parser ────────────────────────────────────────────────────────
@@ -410,7 +645,6 @@ export interface ParsedGameRow {
   // Live stats — not stored in DB, used for in-session display
   kills: number;
   deaths: number;
-  // Advanced stats populated by slippi-js in parser.ts (null until augmented)
   openings_per_kill: number | null;
   damage_per_opening: number | null;
   neutral_win_ratio: number | null;
@@ -419,7 +653,18 @@ export interface ParsedGameRow {
   l_cancel_ratio: number | null;
   avg_kill_percent: number | null;
   avg_death_percent: number | null;
-  defensive_option_rate: number | null;  // inverted: lower = better (fewer rolls/spotdodges/min)
+  defensive_option_rate: number | null;
+  opening_conversion_rate: number | null;
+  stage_control_ratio:     number | null;
+  lead_maintenance_rate:   number | null;
+  tech_chase_rate:         number | null;
+  edgeguard_success_rate:  number | null;
+  hit_advantage_rate:      number | null;
+  recovery_success_rate:   number | null;
+  avg_stock_duration:      number | null;
+  respawn_defense_rate:    number | null;
+  comeback_rate:           number | null;
+  wavedash_miss_rate:      number | null;
 }
 
 const METHOD_GAME = 2;
@@ -498,8 +743,10 @@ export function parseSlpBytes(
   const deaths = 4 - (stream.finalStocks[playerPort] ?? 0);
 
   const convStats = computeConversionStats(
-    playerPort, oppPort, stream.actionFrames, stream.totalDamageTaken, stream.finalStocks
+    playerPort, oppPort, stream.actionFrames, stream.totalDamageTaken, stream.finalStocks, stream.frameData
   );
+  const winLoss: "win" | "loss" = (result === "win" || result === "lras_win") ? "win" : "loss";
+  const advStats = computeAdvancedStats(playerPort, oppPort, stream.frameData, winLoss);
 
   return [{
     filename,
@@ -520,6 +767,7 @@ export function parseSlpBytes(
     damage_per_opening: convStats.damage_per_opening,
     neutral_win_ratio:  convStats.neutral_win_ratio,
     counter_hit_rate:   convStats.counter_hit_rate,
+    opening_conversion_rate: convStats.opening_conversion_rate,
     inputs_per_minute: (() => {
       const inputs = stream.inputCounts[playerPort] ?? 0;
       const mins   = stream.durationFrames / 3600;
@@ -543,5 +791,15 @@ export function parseSlpBytes(
       const mins = stream.durationFrames / 3600;
       return mins > 0 ? opts / mins : null;
     })(),
+    stage_control_ratio:    advStats.stage_control_ratio,
+    lead_maintenance_rate:  advStats.lead_maintenance_rate,
+    tech_chase_rate:        advStats.tech_chase_rate,
+    edgeguard_success_rate: advStats.edgeguard_success_rate,
+    hit_advantage_rate:     advStats.hit_advantage_rate,
+    recovery_success_rate:  advStats.recovery_success_rate,
+    avg_stock_duration:     advStats.avg_stock_duration,
+    respawn_defense_rate:   advStats.respawn_defense_rate,
+    comeback_rate:          advStats.comeback_rate,
+    wavedash_miss_rate:     advStats.wavedash_miss_rate,
   }];
 }

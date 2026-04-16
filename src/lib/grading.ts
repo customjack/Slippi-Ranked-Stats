@@ -1,13 +1,15 @@
 /**
  * grading.ts — Set Grading System logic.
  *
- * !! DEV ONLY — not shipped to users yet !!
- *
  * Grades a completed set across four equally-weighted categories:
- *   Neutral   (neutral_win_ratio, counter_hit_rate)
+ *   Neutral   (neutral_win_ratio)
  *   Punish    (damage_per_opening, openings_per_kill, avg_kill_percent*)
- *   Defense   (avg_death_percent*, defensive_option_rate)
+ *   Defense   (avg_death_percent*)
  *   Execution (l_cancel_ratio, inputs_per_minute)
+ *
+ * counter_hit_rate and defensive_option_rate are shown in the breakdown but
+ * excluded from scoring — they are confounded by opponent quality and do not
+ * reliably measure skill independent of matchup difficulty.
  *
  * * avg_kill_percent and avg_death_percent are only scored when a character-
  *   specific or matchup-specific baseline is available. The _overall bucket
@@ -20,7 +22,7 @@
  *   3. by_player_char["_overall"]       — cross-character fallback
  *
  * Each stat is scored 0–100 via percentile interpolation. Category score =
- * equal-weight average of its non-null stats. Overall score = equal-weight
+ * equal-weight average of its non-null scored stats. Overall score = equal-weight
  * average of the four category scores, plus a +5 win bonus (capped at 100).
  */
 
@@ -51,15 +53,24 @@ export interface SetGrade {
   score:      number;           // 0–100 weighted composite
   categories: Record<CategoryKey, CategoryGrade>;
   breakdown: {
-    neutral_win_ratio:     StatGrade;
-    counter_hit_rate:      StatGrade;
-    openings_per_kill:     StatGrade;
-    damage_per_opening:    StatGrade;
-    avg_kill_percent:      StatGrade;
-    avg_death_percent:     StatGrade;
-    defensive_option_rate: StatGrade;
-    l_cancel_ratio:        StatGrade;
-    inputs_per_minute:     StatGrade;
+    neutral_win_ratio:       StatGrade;
+    opening_conversion_rate: StatGrade;
+    stage_control_ratio:     StatGrade;
+    lead_maintenance_rate:   StatGrade;
+    openings_per_kill:       StatGrade;
+    damage_per_opening:      StatGrade;
+    avg_kill_percent:        StatGrade;
+    edgeguard_success_rate:  StatGrade;
+    tech_chase_rate:         StatGrade;
+    hit_advantage_rate:      StatGrade;
+    avg_death_percent:       StatGrade;
+    recovery_success_rate:   StatGrade;
+    avg_stock_duration:      StatGrade;
+    respawn_defense_rate:    StatGrade;
+    comeback_rate:           StatGrade;
+    l_cancel_ratio:          StatGrade;
+    inputs_per_minute:       StatGrade;
+    wavedash_miss_rate:      StatGrade;
   };
   playerChar:     string;
   opponentChar:   string;
@@ -75,30 +86,77 @@ export interface SetGrade {
 const INVERTED_STATS = new Set([
   "openings_per_kill",
   "avg_kill_percent",
-  "defensive_option_rate",
+  "wavedash_miss_rate",
 ]);
 
+/**
+ * Stats shown in the breakdown display but excluded from category scoring.
+ * These are too confounded by opponent quality to reliably measure individual skill:
+ * - counter_hit_rate: can be LOWER against stronger opponents who probe more carefully
+ * - defensive_option_rate: naturally higher when facing stronger pressure
+ */
+// All new stats are pending community benchmarks. Once grade_baselines.json is
+// regenerated with these fields, remove them from this set to enable scoring.
+export const DISPLAY_ONLY_STATS = new Set<keyof SetGrade["breakdown"]>([
+  "opening_conversion_rate",
+  "stage_control_ratio",
+  "lead_maintenance_rate",
+  "edgeguard_success_rate",
+  "tech_chase_rate",
+  "hit_advantage_rate",
+  "recovery_success_rate",
+  "avg_stock_duration",
+  "respawn_defense_rate",
+  "comeback_rate",
+  "wavedash_miss_rate",
+]);
+
+/**
+ * Per-stat scoring weights. Unlisted stats default to 1.0.
+ * inputs_per_minute is half-weight — it measures real execution quality but has
+ * low session variance for top players, so we don't want it dominating Execution.
+ */
+const STAT_WEIGHTS: Partial<Record<keyof SetGrade["breakdown"], number>> = {
+  inputs_per_minute: 0.5,
+};
+
+/** Overall score weights per category. Punish and Neutral are highest because
+ *  converting openings and winning neutral exchanges are the primary skill expression. */
+const CATEGORY_WEIGHTS: Record<CategoryKey, number> = {
+  punish:    0.35,
+  neutral:   0.30,
+  defense:   0.20,
+  execution: 0.15,
+};
+
 /** Category definitions — stats listed in display order within each category.
- *  Exported so the display component can iterate the same mapping (avoids
- *  the previous duplicated list in SetGradeDisplay.svelte that drifted on
- *  category changes). */
+ *  Exported so the display component can iterate the same mapping. */
 export const CATEGORY_DEFS: Record<CategoryKey, { label: string; stats: (keyof SetGrade["breakdown"])[] }> = {
-  neutral:   { label: "Neutral",   stats: ["neutral_win_ratio", "counter_hit_rate"]                                    },
-  punish:    { label: "Punish",    stats: ["damage_per_opening", "openings_per_kill", "avg_kill_percent"]              },
-  defense:   { label: "Defense",   stats: ["avg_death_percent", "defensive_option_rate"]                               },
-  execution: { label: "Execution", stats: ["l_cancel_ratio", "inputs_per_minute"]                                      },
+  neutral:   { label: "Neutral",   stats: ["neutral_win_ratio", "opening_conversion_rate", "stage_control_ratio", "lead_maintenance_rate", "comeback_rate"]   },
+  punish:    { label: "Punish",    stats: ["damage_per_opening", "openings_per_kill", "avg_kill_percent", "edgeguard_success_rate", "tech_chase_rate", "hit_advantage_rate"] },
+  defense:   { label: "Defense",   stats: ["avg_death_percent", "recovery_success_rate", "avg_stock_duration", "respawn_defense_rate"]                         },
+  execution: { label: "Execution", stats: ["l_cancel_ratio", "inputs_per_minute", "wavedash_miss_rate"]                                                        },
 };
 
 const STAT_LABELS: Record<string, string> = {
-  neutral_win_ratio:     "Neutral Win Rate",
-  counter_hit_rate:      "Counter Hit Rate",
-  openings_per_kill:     "Openings / Kill",
-  damage_per_opening:    "Damage / Opening",
-  avg_kill_percent:      "Avg Kill %",
-  avg_death_percent:     "Avg Death %",
-  defensive_option_rate: "Def. Options / Min",
-  l_cancel_ratio:        "L-Cancel %",
-  inputs_per_minute:     "Inputs / Min",
+  neutral_win_ratio:       "Neutral Win Rate",
+  opening_conversion_rate: "Opening Conv. %",
+  stage_control_ratio:     "Stage Control %",
+  lead_maintenance_rate:   "Lead Maintenance %",
+  openings_per_kill:       "Openings / Kill",
+  damage_per_opening:      "Damage / Opening",
+  avg_kill_percent:        "Avg Kill %",
+  edgeguard_success_rate:  "Edgeguard %",
+  tech_chase_rate:         "Tech Chase %",
+  hit_advantage_rate:      "Hit Advantage %",
+  avg_death_percent:       "Avg Death %",
+  recovery_success_rate:   "Recovery %",
+  avg_stock_duration:      "Avg Stock Duration",
+  respawn_defense_rate:    "Respawn Defense %",
+  comeback_rate:           "Comeback Rate",
+  l_cancel_ratio:          "L-Cancel %",
+  inputs_per_minute:       "Inputs / Min",
+  wavedash_miss_rate:      "Missed WD Rate",
 };
 
 // ── Percentile scoring ─────────────────────────────────────────────────────
@@ -125,24 +183,29 @@ function percentileScore(value: number, t: StatThresholds, inverted: boolean): n
   return Math.min(100, Math.max(0, score));
 }
 
-function scoreToGrade(score: number): GradeLetter {
-  if (score >= 95) return "S";
-  if (score >= 90) return "A";
-  if (score >= 75) return "B";
-  if (score >= 50) return "C";
-  if (score >= 25) return "D";
+export function scoreToGrade(score: number): GradeLetter {
+  if (score >= 75) return "S";
+  if (score >= 63) return "A";
+  if (score >= 52) return "B";
+  if (score >= 40) return "C";
+  if (score >= 28) return "D";
   return "F";
 }
 
 function formatStatValue(key: string, value: number | null): string {
   if (value === null) return "—";
-  if (key === "neutral_win_ratio" || key === "l_cancel_ratio" || key === "counter_hit_rate")
-    return (value * 100).toFixed(0) + "%";
-  if (key === "damage_per_opening")    return value.toFixed(1);
-  if (key === "openings_per_kill")     return value.toFixed(2);
+  const PCT_STATS = new Set([
+    "neutral_win_ratio", "l_cancel_ratio",
+    "opening_conversion_rate", "stage_control_ratio", "lead_maintenance_rate",
+    "edgeguard_success_rate", "tech_chase_rate", "hit_advantage_rate",
+    "recovery_success_rate", "respawn_defense_rate", "comeback_rate", "wavedash_miss_rate",
+  ]);
+  if (PCT_STATS.has(key))                return (value * 100).toFixed(0) + "%";
+  if (key === "damage_per_opening")      return value.toFixed(1);
+  if (key === "openings_per_kill")       return value.toFixed(2);
   if (key === "avg_kill_percent" || key === "avg_death_percent") return value.toFixed(0) + "%";
-  if (key === "inputs_per_minute")     return Math.round(value).toString();
-  if (key === "defensive_option_rate") return value.toFixed(1);
+  if (key === "inputs_per_minute")       return Math.round(value).toString();
+  if (key === "avg_stock_duration")      return Math.round(value / 60).toString() + "s";
   return value.toFixed(2);
 }
 
@@ -234,29 +297,34 @@ export function gradeSet(
     };
   }
 
-  // ── Score each category (equal weight among non-null stats) ──────────────
+  // ── Score each category (weighted average of non-null, non-display-only stats) ────
   const categories = {} as SetGrade["categories"];
 
   for (const [catKey, def] of Object.entries(CATEGORY_DEFS) as [CategoryKey, typeof CATEGORY_DEFS[CategoryKey]][]) {
-    const scores = def.stats
-      .map((s) => breakdown[s].score)
-      .filter((s): s is number => s !== null);
+    const weighted = def.stats
+      .filter((s) => !DISPLAY_ONLY_STATS.has(s))
+      .flatMap((s) => {
+        const sc = breakdown[s].score;
+        if (sc === null) return [];
+        return [{ score: sc, weight: STAT_WEIGHTS[s] ?? 1.0 }];
+      });
 
-    if (scores.length === 0) {
+    if (weighted.length === 0) {
       categories[catKey] = { label: def.label, letter: null, score: null };
     } else {
-      const catScore = scores.reduce((a, b) => a + b, 0) / scores.length;
+      const totalWeight = weighted.reduce((a, w) => a + w.weight, 0);
+      const catScore = weighted.reduce((a, w) => a + w.score * w.weight, 0) / totalWeight;
       categories[catKey] = { label: def.label, letter: scoreToGrade(catScore), score: Math.round(catScore * 10) / 10 };
     }
   }
 
-  // ── Overall score: equal weight across non-null categories + win bonus ────
-  const catScores = Object.values(categories)
-    .map((c) => c.score)
-    .filter((s): s is number => s !== null);
+  // ── Overall score: category-weighted average across non-null categories + win bonus ────
+  const scoredCats = (Object.entries(categories) as [CategoryKey, CategoryGrade][])
+    .filter(([, c]) => c.score !== null);
 
-  const rawScore = catScores.length > 0
-    ? catScores.reduce((a, b) => a + b, 0) / catScores.length
+  const totalCatWeight = scoredCats.reduce((a, [k]) => a + CATEGORY_WEIGHTS[k], 0);
+  const rawScore = scoredCats.length > 0
+    ? scoredCats.reduce((a, [k, c]) => a + c.score! * CATEGORY_WEIGHTS[k], 0) / totalCatWeight
     : 0;
 
   // +5 for a win — winning a set demonstrates adaptability and reads even when

@@ -64,17 +64,28 @@ CHARACTERS: dict[int, str] = {
     24: "Pichu",             25: "Ganondorf",
 }
 
-# Stats included in baselines
+# Stats included in baselines — must match STAT_LABELS keys in grading.ts
 STAT_KEYS = [
+    # Original scored stats
     "neutral_win_ratio",
-    "counter_hit_rate",
     "openings_per_kill",
     "damage_per_opening",
     "avg_kill_percent",
     "avg_death_percent",
-    "defensive_option_rate",
     "l_cancel_ratio",
     "inputs_per_minute",
+    # New stats (pending benchmarks — remove from DISPLAY_ONLY_STATS in grading.ts once generated)
+    "opening_conversion_rate",
+    "stage_control_ratio",
+    "lead_maintenance_rate",
+    "tech_chase_rate",
+    "edgeguard_success_rate",
+    "hit_advantage_rate",
+    "recovery_success_rate",
+    "avg_stock_duration",
+    "respawn_defense_rate",
+    "comeback_rate",
+    "wavedash_miss_rate",
 ]
 
 MIN_MATCHUP_SAMPLES = 20
@@ -115,12 +126,29 @@ DEFENSIVE_STATES = {29, 30, 31}  # roll fwd, roll bwd, spot dodge
 
 # ── Stat computation (vectorized with numpy) ─────────────────────────────────
 
+def _get_positions(post):
+    """Extract (x, y) numpy arrays from a peppi-py post-frame object. Returns (None, None) on failure."""
+    try:
+        pos = post.position
+        if hasattr(pos, 'x'):
+            return np.asarray(pos.x, dtype=float), np.asarray(pos.y, dtype=float)
+        # PyArrow StructArray: use field()
+        return (np.array(pos.field('x').to_pylist(), dtype=float),
+                np.array(pos.field('y').to_pylist(), dtype=float))
+    except (AttributeError, TypeError, ValueError):
+        pass
+    try:
+        return np.asarray(post.position_x, dtype=float), np.asarray(post.position_y, dtype=float)
+    except (AttributeError, TypeError):
+        return None, None
+
+
 def compute_game_stats(game, player_idx: int, opp_idx: int) -> dict | None:
     """
-    Compute all 9 performance stats for player_idx in the given peppi game.
+    Compute all 18 performance stats for player_idx in the given peppi game.
 
-    Uses numpy vectorized operations on peppi-py's PyArrow struct-of-arrays
-    for maximum speed (no per-frame Python loop).
+    Uses numpy vectorized operations where possible; per-event Python loops
+    for windowed stats (tech chase, edgeguard, recovery, etc.).
 
     Returns a dict with all STAT_KEYS, or None if the game is unusable.
     """
@@ -137,52 +165,44 @@ def compute_game_stats(game, player_idx: int, opp_idx: int) -> dict | None:
     p_pre  = p_port.leader.pre
 
     # Convert PyArrow arrays to numpy (zero-copy when possible)
-    p_state = np.array(p_post.state, copy=False)
-    o_state = np.array(o_post.state, copy=False)
-    p_pct   = np.array(p_post.percent, copy=False)
-    o_pct   = np.array(o_post.percent, copy=False)
-    p_stocks = np.array(p_post.stocks, copy=False)
-    o_stocks = np.array(o_post.stocks, copy=False)
+    p_state  = np.array(p_post.state,   copy=False)
+    o_state  = np.array(o_post.state,   copy=False)
+    p_pct    = np.array(p_post.percent, copy=False)
+    o_pct    = np.array(o_post.percent, copy=False)
+    p_stocks = np.array(p_post.stocks,  copy=False)
+    o_stocks = np.array(o_post.stocks,  copy=False)
 
     n_frames = len(p_state)
-    if n_frames < 60:  # skip extremely short games (< 1 second)
+    if n_frames < 60:
         return None
 
-    # ── Neutral win/loss detection (vectorized) ──────────────────────────────
-    # A neutral win = opponent was in control on prev frame AND is vulnerable now
+    # ── Position data (stage_control, edgeguard, recovery, wavedash) ─────────
+    p_x, p_y = _get_positions(p_post)
+    o_x, o_y = _get_positions(o_post)
+
+    # ── State masks ──────────────────────────────────────────────────────────
     p_ctrl = _make_state_mask(p_state, IN_CONTROL_RANGES)
     o_ctrl = _make_state_mask(o_state, IN_CONTROL_RANGES)
     p_vuln = _make_state_mask(p_state, VULNERABLE_RANGES)
     o_vuln = _make_state_mask(o_state, VULNERABLE_RANGES)
-    o_atk  = _make_state_mask(o_state, ATTACKING_RANGES)
 
-    # Transitions: prev frame in_control → current frame vulnerable
-    neutral_wins  = np.sum(o_ctrl[:-1] & o_vuln[1:])
+    # ── Neutral win/loss (vectorized) ────────────────────────────────────────
+    neutral_wins   = np.sum(o_ctrl[:-1] & o_vuln[1:])
     neutral_losses = np.sum(p_ctrl[:-1] & p_vuln[1:])
+    total_neutral  = int(neutral_wins + neutral_losses)
+    nw             = int(neutral_wins)
 
-    # Counter hits: subset of neutral wins where opponent was ALSO attacking on prev frame
-    # (must require o_ctrl too — counter_hits ⊆ neutral_wins)
-    counter_hits = np.sum(o_ctrl[:-1] & o_atk[:-1] & o_vuln[1:])
-
-    total_neutral = int(neutral_wins + neutral_losses)
-
-    # ── Defensive options (rolls + spotdodges) ───────────────────────────────
-    p_def = np.isin(p_state, list(DEFENSIVE_STATES))
-    # Count transitions INTO a defensive state (not sustained frames in one)
-    def_entries = np.sum(p_def[1:] & ~p_def[:-1])
-    duration_min = n_frames / 3600.0  # 60 fps * 60 sec
+    duration_min = n_frames / 3600.0  # 60 fps × 60 sec
 
     # ── L-cancel tracking ────────────────────────────────────────────────────
     lc_data = p_post.l_cancel
-    lc_successes = 0
-    lc_attempts = 0
+    lc_successes = lc_attempts = 0
     if lc_data is not None:
-        lc_arr = np.array(lc_data, copy=False)
+        lc_arr       = np.array(lc_data, copy=False)
         lc_successes = int(np.sum(lc_arr == 1))
-        lc_failures  = int(np.sum(lc_arr == 2))
-        lc_attempts  = lc_successes + lc_failures
+        lc_attempts  = lc_successes + int(np.sum(lc_arr == 2))
 
-    # ── Inputs per minute (from pre-frame buttons_physical) ──────────────────
+    # ── Inputs per minute ────────────────────────────────────────────────────
     ipm = None
     if p_pre is not None and p_pre.buttons_physical is not None:
         bp = np.array(p_pre.buttons_physical, copy=False)
@@ -192,45 +212,174 @@ def compute_game_stats(game, player_idx: int, opp_idx: int) -> dict | None:
                 ipm = input_changes / duration_min
 
     # ── Kill / death percent tracking ────────────────────────────────────────
-    # Detect stock losses as frames where stock count decreases
     o_stock_diff = np.diff(o_stocks.astype(np.int16))
     p_stock_diff = np.diff(p_stocks.astype(np.int16))
 
-    # Kill = opponent lost a stock (stock_diff < 0)
-    kill_frames = np.where(o_stock_diff < 0)[0]  # indices in diff array = frame before stock loss
+    kill_frames  = np.where(o_stock_diff < 0)[0]
     death_frames = np.where(p_stock_diff < 0)[0]
 
-    kill_percents = o_pct[kill_frames].tolist() if len(kill_frames) > 0 else []
-    death_percents = p_pct[death_frames].tolist() if len(death_frames) > 0 else []
-
-    # Filter out nonsensical values (e.g. 0% kills from timeouts/LRAS)
-    kill_percents = [p for p in kill_percents if p > 0]
-    death_percents = [p for p in death_percents if p > 0]
-
+    kill_percents  = [p for p in o_pct[kill_frames].tolist()  if p > 0]
+    death_percents = [p for p in p_pct[death_frames].tolist() if p > 0]
     kills = len(kill_percents)
 
-    # ── Damage per opening ───────────────────────────────────────────────────
-    # Total damage dealt = sum of all opponent percent resets (stock losses)
-    # plus final opponent percent on their last stock
-    total_damage = 0.0
-    if len(kill_frames) > 0:
-        total_damage = float(np.sum(o_pct[kill_frames]))
-    # Add damage on the final stock (game-ending percent or surviving percent)
+    total_damage = float(np.sum(o_pct[kill_frames])) if len(kill_frames) > 0 else 0.0
     total_damage += float(o_pct[-1])
 
-    nw = int(neutral_wins)
+    # ── Opening conversion rate ──────────────────────────────────────────────
+    # Per neutral win: did opp take ≥20% damage OR lose a stock before recovering?
+    nw_frames = np.where(o_ctrl[:-1] & o_vuln[1:])[0] + 1
+    converted = 0
+    for fw in nw_frames:
+        sp = float(o_pct[fw]); ss = int(o_stocks[fw])
+        for fe in range(int(fw) + 1, min(int(fw) + 300, n_frames)):
+            if int(o_stocks[fe]) < ss:
+                converted += 1; break
+            if float(o_pct[fe]) - sp >= 20.0:
+                converted += 1; break
+            if o_ctrl[fe]:
+                break
+    opening_conversion_rate = converted / len(nw_frames) if len(nw_frames) > 0 else None
+
+    # ── Stage control ratio ──────────────────────────────────────────────────
+    stage_control_ratio = None
+    if p_x is not None and o_x is not None and p_y is not None and o_y is not None:
+        on_stage = (p_y > -5.0) & (o_y > -5.0)
+        valid = int(np.sum(on_stage))
+        if valid > 0:
+            stage_control_ratio = float(np.sum((np.abs(p_x) < np.abs(o_x)) & on_stage)) / valid
+
+    # ── Tech chase rate ──────────────────────────────────────────────────────
+    o_down       = _make_state_mask(o_state, [(183, 204)])
+    down_frames  = np.where(o_down[1:] & ~o_down[:-1])[0] + 1
+    tech_chase_rate = None
+    if len(down_frames) > 0:
+        tc_hits = 0
+        for fd in down_frames:
+            sp = float(o_pct[fd])
+            for fw in range(int(fd) + 1, min(int(fd) + 45, n_frames)):
+                if float(o_pct[fw]) > sp + 2.0:
+                    tc_hits += 1; break
+                if o_ctrl[fw]:
+                    break
+        tech_chase_rate = tc_hits / len(down_frames)
+
+    # ── Edgeguard success rate ───────────────────────────────────────────────
+    edgeguard_success_rate = None
+    if o_y is not None:
+        o_offstage    = o_y < -5.0
+        offstage_frs  = np.where(o_offstage[1:] & ~o_offstage[:-1])[0] + 1
+        if len(offstage_frs) > 0:
+            eg_kills = 0
+            for fo in offstage_frs:
+                ss = int(o_stocks[fo])
+                for fw in range(int(fo) + 1, min(int(fo) + 180, n_frames)):
+                    if int(o_stocks[fw]) < ss:
+                        eg_kills += 1; break
+            edgeguard_success_rate = eg_kills / len(offstage_frs)
+
+    # ── Recovery success rate ────────────────────────────────────────────────
+    recovery_success_rate = None
+    if p_y is not None:
+        p_offstage    = p_y < -5.0
+        p_offstage_frs = np.where(p_offstage[1:] & ~p_offstage[:-1])[0] + 1
+        if len(p_offstage_frs) > 0:
+            recoveries = 0
+            for fo in p_offstage_frs:
+                ss = int(p_stocks[fo]); recovered = False
+                for fw in range(int(fo) + 1, min(int(fo) + 180, n_frames)):
+                    if int(p_stocks[fw]) < ss:
+                        break
+                    if float(p_y[fw]) > 5.0:
+                        recovered = True; break
+                if recovered:
+                    recoveries += 1
+            recovery_success_rate = recoveries / len(p_offstage_frs)
+
+    # ── Hit advantage rate ───────────────────────────────────────────────────
+    p_atk      = _make_state_mask(p_state, ATTACKING_RANGES)
+    hit_frs    = np.where(o_vuln[1:] & ~o_vuln[:-1])[0] + 1
+    hit_advantage_rate = None
+    if len(hit_frs) > 0:
+        followups = int(np.sum([
+            np.any(p_atk[int(fh)+1:min(int(fh)+30, n_frames)])
+            for fh in hit_frs
+        ]))
+        hit_advantage_rate = followups / len(hit_frs)
+
+    # ── Average stock duration (frames) ─────────────────────────────────────
+    if len(death_frames) > 0:
+        prev = 0; durs = []
+        for fd in death_frames:
+            durs.append(int(fd) - prev); prev = int(fd) + 1
+        avg_stock_duration = float(np.mean(durs))
+    else:
+        avg_stock_duration = float(n_frames)
+
+    # ── Respawn defense rate ─────────────────────────────────────────────────
+    # After each death, did player avoid taking ≥5% in the ~150f respawn window?
+    respawn_defense_rate = None
+    if len(death_frames) > 0:
+        ok = 0
+        for fd in death_frames:
+            rs = int(fd) + 80  # approx respawn frame
+            re = min(rs + 150, n_frames - 1)
+            if rs >= n_frames:
+                continue
+            sp   = float(p_pct[min(rs, n_frames - 1)])
+            safe = all(float(p_pct[fw]) <= sp + 5.0 for fw in range(rs + 1, re + 1))
+            if safe:
+                ok += 1
+        respawn_defense_rate = ok / len(death_frames)
+
+    # ── Comeback rate & Lead maintenance rate (binary per game) ──────────────
+    player_won   = (int(p_stocks[-1]) > int(o_stocks[-1])) or \
+                   (int(p_stocks[-1]) == int(o_stocks[-1]) and float(p_pct[-1]) < float(o_pct[-1]))
+    player_ahead = (o_stocks < p_stocks) | ((o_stocks == p_stocks) & (o_pct > p_pct + 15.0))
+    player_behind = (p_stocks < o_stocks) | ((p_stocks == o_stocks) & (p_pct > o_pct + 15.0))
+
+    lead_maintenance_rate = (1.0 if player_won else 0.0) if bool(np.any(player_ahead))  else None
+    comeback_rate         = (1.0 if player_won else 0.0) if bool(np.any(player_behind)) else None
+
+    # ── Wavedash miss rate ───────────────────────────────────────────────────
+    # EscapeAir (235) → LandingFallSpecial (189) = success; → regular landing = miss
+    ESCAPE_AIR        = 235
+    LANDING_FALL_SPEC = 189
+    REGULAR_LANDING   = {3, 4}
+
+    esc_frs  = np.where((p_state[1:] == ESCAPE_AIR) & (p_state[:-1] != ESCAPE_AIR))[0] + 1
+    wd_ok = wd_miss = 0
+    for fe in esc_frs:
+        for fw in range(int(fe) + 1, min(int(fe) + 6, n_frames)):
+            s = int(p_state[fw])
+            if s == LANDING_FALL_SPEC:
+                wd_ok += 1; break
+            if s in REGULAR_LANDING:
+                if p_y is None or float(p_y[fe]) < 15.0:
+                    wd_miss += 1
+                break
+    total_wd = wd_ok + wd_miss
+    wavedash_miss_rate = wd_miss / total_wd if total_wd > 0 else None
 
     # ── Assemble results ─────────────────────────────────────────────────────
     return {
-        "neutral_win_ratio":     nw / total_neutral if total_neutral > 0 else None,
-        "counter_hit_rate":      int(counter_hits) / nw if nw > 0 else None,
-        "openings_per_kill":     nw / kills if kills > 0 else None,
-        "damage_per_opening":    total_damage / nw if nw > 0 else None,
-        "avg_kill_percent":      sum(kill_percents) / len(kill_percents) if kill_percents else None,
-        "avg_death_percent":     sum(death_percents) / len(death_percents) if death_percents else None,
-        "defensive_option_rate": float(def_entries) / duration_min if duration_min > 0 else None,
-        "l_cancel_ratio":        lc_successes / lc_attempts if lc_attempts > 0 else None,
-        "inputs_per_minute":     ipm,
+        "neutral_win_ratio":      nw / total_neutral if total_neutral > 0 else None,
+        "openings_per_kill":      nw / kills if kills > 0 else None,
+        "damage_per_opening":     total_damage / nw if nw > 0 else None,
+        "avg_kill_percent":       sum(kill_percents) / kills if kills > 0 else None,
+        "avg_death_percent":      sum(death_percents) / len(death_percents) if death_percents else None,
+        "l_cancel_ratio":         lc_successes / lc_attempts if lc_attempts > 0 else None,
+        "inputs_per_minute":      ipm,
+        "opening_conversion_rate": opening_conversion_rate,
+        "stage_control_ratio":    stage_control_ratio,
+        "lead_maintenance_rate":  lead_maintenance_rate,
+        "tech_chase_rate":        tech_chase_rate,
+        "edgeguard_success_rate": edgeguard_success_rate,
+        "hit_advantage_rate":     hit_advantage_rate,
+        "recovery_success_rate":  recovery_success_rate,
+        "avg_stock_duration":     avg_stock_duration,
+        "respawn_defense_rate":   respawn_defense_rate,
+        "comeback_rate":          comeback_rate,
+        "wavedash_miss_rate":     wavedash_miss_rate,
     }
 
 

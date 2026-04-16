@@ -1,15 +1,15 @@
 <script lang="ts">
-  import { CATEGORY_DEFS, type SetGrade, type GradeLetter, type CategoryKey } from "../lib/grading";
+  import { CATEGORY_DEFS, DISPLAY_ONLY_STATS, type SetGrade, type GradeLetter, type CategoryKey } from "../lib/grading";
 
   let { grade }: { grade: SetGrade } = $props();
 
   const GRADE_COLORS: Record<GradeLetter, string> = {
-    S: "#f0c040",
-    A: "#2ecc71",
-    B: "#3498db",
-    C: "#e0e0a0",
-    D: "#e67e22",
-    F: "#e74c3c",
+    S: "#FFD700",   // gold
+    A: "#00e676",   // vivid green
+    B: "#448aff",   // vivid blue
+    C: "#aaaaaa",   // neutral gray
+    D: "#ff9800",   // orange
+    F: "#ff1744",   // bright red
   };
 
   function gc(g: GradeLetter | null): string {
@@ -41,11 +41,15 @@
 
     <div style="
       width: 60px; height: 60px; border-radius: 12px; flex-shrink: 0;
-      background: {gc(grade.letter)}1a;
+      background: {gc(grade.letter)}{grade.letter === 'S' ? '30' : grade.letter === 'A' ? '22' : '18'};
       border: 2px solid {gc(grade.letter)};
       display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+      {grade.letter === 'S' ? `box-shadow: 0 0 16px 4px ${gc(grade.letter)}66, 0 0 4px 1px ${gc(grade.letter)}aa;` : ''}
     ">
-      <div style="font-size: 28px; font-weight: 800; line-height: 1; color: {gc(grade.letter)}">{grade.letter}</div>
+      <div style="
+        font-size: 28px; font-weight: 800; line-height: 1; color: {gc(grade.letter)};
+        {grade.letter === 'S' ? `text-shadow: 0 0 12px ${gc(grade.letter)}cc;` : ''}
+      ">{grade.letter}</div>
       <div style="font-size: 9px; color: var(--muted)">{grade.score.toFixed(0)}</div>
     </div>
   </div>
@@ -80,21 +84,25 @@
              stays in sync with grading logic when categories are rearranged. -->
         {#each CATEGORY_DEFS[catKey].stats as statKey}
           {@const stat = catStats[statKey as keyof typeof catStats]}
+          {@const displayOnly = DISPLAY_ONLY_STATS.has(statKey)}
           <div style="
             display: grid; grid-template-columns: 1fr 72px 52px 26px;
             align-items: center; gap: 8px;
             background: var(--bg); border-radius: 6px; padding: 6px 10px;
             margin-bottom: 3px;
+            opacity: {displayOnly ? 0.55 : 1};
           ">
             <!-- Label + value -->
             <div>
               <div style="font-size: 11px; font-weight: 500">{stat.label}</div>
-              <div style="font-size: 10px; color: var(--muted)">{stat.formatted}</div>
+              <div style="font-size: 10px; color: var(--muted)">
+                {stat.formatted}{#if displayOnly}<span style="font-size: 9px; margin-left: 4px; opacity: 0.7">info only</span>{/if}
+              </div>
             </div>
 
             <!-- Score bar -->
             <div style="height: 3px; background: var(--border); border-radius: 2px; overflow: hidden">
-              {#if stat.score !== null}
+              {#if stat.score !== null && !displayOnly}
                 <div style="
                   height: 100%; border-radius: 2px; width: {stat.score}%;
                   background: {gc(stat.grade)};
@@ -104,14 +112,14 @@
 
             <!-- Score number -->
             <div style="font-size: 10px; color: var(--muted); text-align: right">
-              {stat.score !== null ? stat.score.toFixed(0) : "—"}
+              {!displayOnly && stat.score !== null ? stat.score.toFixed(0) : "—"}
             </div>
 
-            <!-- Grade letter -->
+            <!-- Grade letter (blank for display-only stats) -->
             <div style="
               font-size: 12px; font-weight: 700; text-align: center;
               color: {gc(stat.grade)};
-            ">{stat.grade ?? "—"}</div>
+            ">{displayOnly ? "~" : (stat.grade ?? "—")}</div>
           </div>
         {/each}
       </div>

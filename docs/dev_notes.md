@@ -8,20 +8,15 @@ hand-off mechanism between work sessions and across machines.
 
 ## Set Grading System (in progress, dev-only)
 
-Wired end-to-end and gated behind `import.meta.env.DEV`. Production
-builds tree-shake the entire feature out — visible only when running
-`npm run tauri dev`.
+Wired end-to-end and gated behind `$isPremium`. Visible to all premium users in production.
 
 ### What's built
 
 - **`src/lib/grading.ts`** — `gradeSet(games, playerChar, opponentChar, setResult, wins, losses)` returns a `SetGrade` with overall letter/score, four category grades (Neutral, Punish, Defense, Execution), and per-stat breakdowns. Categories are equally weighted; stats within a category are equally weighted.
 - **`src/lib/grade-benchmarks.ts`** — Generated from `scripts/grade_baselines.json`. Three-tier benchmark structure: `by_matchup[playerChar][oppChar]` → `by_player_char[playerChar]` → `by_player_char["_overall"]`. Characters with fewer than 20 samples fall back to the next tier.
 - **`src/components/SetGradeDisplay.svelte`** — Renders the overall grade card + category rows. Iterates `CATEGORY_DEFS` from grading.ts so display always matches the grading logic. Shows "matchup baseline" / "overall baseline" annotation when applicable.
-- **Watcher integration** (`src/lib/watcher.ts`, `handleRankedGame`) — When a set completes during a live watcher session, calls `gradeSet` against in-memory `liveGameStats` and writes the result to `lastSetGrade`. Gated by `import.meta.env.DEV`.
-- **Dev test panel** (`src/components/tabs/LiveRankedSession.svelte`) — Yellow card at the top of the **Live Ranked Session** tab. Picks any of the last 100 completed sets from a dropdown, re-parses each game's .slp file, runs `gradeSet`, and renders `SetGradeDisplay`. Only way to test grading without playing a full ranked set, because:
-  - The `games` SQL table only stores metadata (filepath, char IDs, result, etc.)
-  - Per-game stats (openings/kill, neutral win ratio, etc.) live only in `liveGameStats` during a watcher session
-  - The watcher pre-populates `_preExistingMatchIds` from the DB on startup, so re-triggering on existing files won't fire grading
+- **Watcher integration** (`src/lib/watcher.ts`, `handleRankedGame`) — When a set completes during a live watcher session, calls `gradeSet` against in-memory `liveGameStats` and writes the result to `lastSetGrade`. Shown in Live Session tab for premium users.
+- **Set Grades tab** (`src/components/tabs/GradeHistory.svelte`) — "Grade Recent Sets" button re-parses last 100 completed sets, shows a compact table (Date / Opponent / Result / Score / Grade letter), distribution summary, and expandable `SetGradeDisplay` on click. Premium-gated.
 
 ### How grading works
 

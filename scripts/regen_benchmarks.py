@@ -21,18 +21,27 @@ import sys
 REPO_ROOT     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INPUT_PATH    = os.path.join(REPO_ROOT, "scripts", "grade_baselines.json")
 OUTPUT_PATH   = os.path.join(REPO_ROOT, "src", "lib", "grade-benchmarks.ts")
-MIN_SAMPLES   = 20
+MIN_SAMPLES   = 50
 
 STAT_KEYS = [
     "neutral_win_ratio",
-    "counter_hit_rate",
     "openings_per_kill",
     "damage_per_opening",
     "avg_kill_percent",
     "avg_death_percent",
-    "defensive_option_rate",
     "l_cancel_ratio",
     "inputs_per_minute",
+    "opening_conversion_rate",
+    "stage_control_ratio",
+    "lead_maintenance_rate",
+    "tech_chase_rate",
+    "edgeguard_success_rate",
+    "hit_advantage_rate",
+    "recovery_success_rate",
+    "avg_stock_duration",
+    "respawn_defense_rate",
+    "comeback_rate",
+    "wavedash_miss_rate",
 ]
 
 
@@ -78,15 +87,24 @@ export interface StatThresholds {{
 }}
 
 export interface CharacterBenchmarks {{
-  neutral_win_ratio:     StatThresholds;
-  counter_hit_rate:      StatThresholds;
-  openings_per_kill:     StatThresholds;  // inverted: lower = better
-  damage_per_opening:    StatThresholds;
-  avg_kill_percent:      StatThresholds;  // inverted: lower = better (killing early)
-  avg_death_percent:     StatThresholds;
-  defensive_option_rate: StatThresholds;  // inverted: lower = better (fewer rolls/dodges)
-  l_cancel_ratio:        StatThresholds;
-  inputs_per_minute:     StatThresholds;
+  neutral_win_ratio:       StatThresholds;
+  openings_per_kill:       StatThresholds;  // inverted: lower = better
+  damage_per_opening:      StatThresholds;
+  avg_kill_percent:        StatThresholds;  // inverted: lower = better (killing early)
+  avg_death_percent:       StatThresholds;
+  l_cancel_ratio:          StatThresholds;
+  inputs_per_minute:       StatThresholds;
+  opening_conversion_rate: StatThresholds;
+  stage_control_ratio:     StatThresholds;
+  lead_maintenance_rate:   StatThresholds;
+  tech_chase_rate:         StatThresholds;
+  edgeguard_success_rate:  StatThresholds;
+  hit_advantage_rate:      StatThresholds;
+  recovery_success_rate:   StatThresholds;
+  avg_stock_duration:      StatThresholds;
+  respawn_defense_rate:    StatThresholds;
+  comeback_rate:           StatThresholds;
+  wavedash_miss_rate:      StatThresholds;  // inverted: lower = better
 }}
 
 export interface Benchmarks {{
