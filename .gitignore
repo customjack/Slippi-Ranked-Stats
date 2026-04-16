@@ -13,3 +13,7 @@ scripts/logs/
 scripts/parse_hf_checkpoint.json
 __pycache__/
 *.pyc
+.venv/
+*.log
+.DS_Store
+Thumbs.db
