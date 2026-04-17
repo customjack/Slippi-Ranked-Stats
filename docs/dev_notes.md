@@ -37,13 +37,13 @@ For each stat in a completed set, `percentileScore(value, thresholds, inverted)`
 | Defense   | `avg_death_percent`, `recovery_success_rate`, `avg_stock_duration`, `respawn_defense_rate`             |
 | Execution | `l_cancel_ratio`, `inputs_per_minute`, `wavedash_miss_rate`                                           |
 
-**All-character baselines** generated from full HuggingFace dataset (221,942 replays across all 25 characters, 430k samples). 17/18 stats have real benchmarks. `wavedash_miss_rate` had a detection bug (wrong state IDs) — fixed in parser, pending re-run.
+**All-character baselines** generated from full HuggingFace dataset (221,603 replays across all 25 characters, 430k samples). All 18 stats have real benchmarks including `wavedash_miss_rate` (state ID bugs fixed and rescan completed 2026-04-17).
 
 ### Open issues before shipping
 
 1. ~~Low per-char sample sizes~~ **Resolved.** Full dataset parse covers all 25 characters with 26 having ≥50 samples, 283 matchup entries.
-2. ~~`inputs_per_minute` placeholder~~ **Resolved.** All stats except `wavedash_miss_rate` have real community baselines.
-3. **Full `--character ALL` rescan needed.** Three parser bugs were fixed (see "Stat fixes" below) that affect OPK, L-cancel, and IPM values in the current `grade_baselines.json`. Re-run `parse_hf_replays.py --character ALL` on the other machine to regenerate correct baselines. `wavedash_miss_rate` will also be populated by this run.
+2. ~~`inputs_per_minute` placeholder~~ **Resolved.** All 18 stats have real community baselines.
+3. ~~**Full `--character ALL` rescan needed.**~~ **Resolved.** Rescan completed 2026-04-17 (221,603 replays, 430k samples). All parser bug fixes (OPK, L-cancel, IPM, DEFENSIVE_STATES, wavedash state IDs) are reflected in current baselines.
 4. **Grade history persistence — proposed, not built.** Full design sketch at [`docs/set_grades_persistence.md`](./set_grades_persistence.md): `set_grades` table keyed by `match_id`, baseline-version invalidation, hydration flow, open questions. **Discuss before implementing.**
 
 ### Stat fixes applied (match slippi-js exactly)
@@ -140,10 +140,3 @@ Anything that needs to travel between machines must be in git. Per-machine state
 
 When picking up work on a different machine, this file plus `git log --oneline` is the source of truth. See also [`docs/session-log.md`](./session-log.md) for chronological session summaries (intent + decisions, not just diffs).
 
-### Active rescan (as of 2026-04-17)
-
-**Do NOT touch these two files on any other machine while the rescan is running:**
-- `scripts/grade_baselines.json`
-- `src/lib/grade-benchmarks.ts`
-
-The primary machine is running `parse_hf_replays.py --character ALL` (~200k replays, 2–4 hrs). When it finishes it will commit and push both files. Pull before doing anything that reads benchmarks.
