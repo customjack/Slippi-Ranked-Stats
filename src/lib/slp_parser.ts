@@ -140,8 +140,8 @@ function isAttacking(s: number): boolean {
       || (s === 0xB0 || s === 0xB1 || s === 0xB2); // special moves
 }
 
-/** Defensive option states: roll forward (29), roll backward (30), spot dodge (31). */
-const DEFENSIVE_STATES = new Set([29, 30, 31]);
+/** Defensive option states: roll forward (233), roll backward (234), spot dodge (235). Matches slippi-js. */
+const DEFENSIVE_STATES = new Set([233, 234, 235]);
 
 /** Grounded-knockdown / tech states (0xB7–0xCC) where tech-chase opportunities arise. */
 function isKnockdown(s: number): boolean {
@@ -327,9 +327,9 @@ function computeAdvancedStats(
   const TC_WINDOW      =  45; // 0.75 s
   const TC_HIT_DMG     =   3;
   const RESPAWN_WINDOW = 150; // 2.5 s
-  const JUMP_STATES    = new Set([24, 25]); // JumpF, JumpB
-  const AIRDODGE       = 235; // EscapeAir
-  const WD_LAND        = 189; // LandingFallSpecial (wavedash landing)
+  const JUMP_STATES    = new Set([24, 25]); // JumpSquat (24), JumpF (25) — wavedash is input during jump squat
+  const AIRDODGE       = 236; // EscapeAir (AIR_DODGE = 236 in slippi-js)
+  const WD_LAND        = 43;  // LandingFallSpecial (state 43 in slippi-js)
   const WD_JUMP_Y      =   5;
   const WD_DODGE_F     =   4;
   const WD_LAND_F      =   4;

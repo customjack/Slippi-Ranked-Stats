@@ -140,7 +140,7 @@ ATTACKING_RANGES = [
     (176, 178),   # special moves (0xB0–0xB2)
 ]
 
-DEFENSIVE_STATES = {29, 30, 31}  # roll fwd, roll bwd, spot dodge
+DEFENSIVE_STATES = {233, 234, 235}  # roll fwd (233), roll bwd (234), spot dodge (235) — matches slippi-js
 
 # Conversion detection (slippi-js: isDamaged || isGrabbed || isCommandGrabbed)
 # A conversion/opening starts when opponent enters any of these states.
@@ -448,9 +448,9 @@ def compute_game_stats(game, player_idx: int, opp_idx: int) -> dict | None:
     # ── Wavedash miss rate ───────────────────────────────────────────────────
     # Mirrors slp_parser.ts detection: Jump (near ground) → Airdodge (within 4f)
     # → LandingFallSpecial (within 4f) = success. Airdodge without LandingFallSpecial = miss.
-    JUMP_STATES       = {24, 25}   # JumpF, JumpB
-    ESCAPE_AIR        = 235        # EscapeAir (airdodge)
-    LANDING_FALL_SPEC = 189        # LandingFallSpecial (wavedash landing)
+    JUMP_STATES       = {24, 25}   # JumpSquat (24), JumpF (25)
+    ESCAPE_AIR        = 236        # EscapeAir (AIR_DODGE = 236 in slippi-js)
+    LANDING_FALL_SPEC = 43         # LandingFallSpecial (state 43 in slippi-js)
     WD_JUMP_Y         = 5.0        # must be near ground when jumping
     WD_DODGE_F        = 4          # airdodge must come within 4 frames of jump
     WD_LAND_F         = 4          # landing must come within 4 frames of airdodge
