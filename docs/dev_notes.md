@@ -43,8 +43,23 @@ For each stat in a completed set, `percentileScore(value, thresholds, inverted)`
 
 1. ~~Low per-char sample sizes~~ **Resolved.** Full dataset parse covers all 25 characters with 26 having ≥50 samples, 283 matchup entries.
 2. ~~`inputs_per_minute` placeholder~~ **Resolved.** All stats except `wavedash_miss_rate` have real community baselines.
-3. **`wavedash_miss_rate` needs re-parse.** Detection logic fixed (ported from TS parser: Jump→Airdodge→LandingFallSpecial sequence) but baselines are still empty. Next `--character ALL` run will populate it.
+3. **Full `--character ALL` rescan needed.** Three parser bugs were fixed (see "Stat fixes" below) that affect OPK, L-cancel, and IPM values in the current `grade_baselines.json`. Re-run `parse_hf_replays.py --character ALL` on the other machine to regenerate correct baselines. `wavedash_miss_rate` will also be populated by this run.
 4. **Grade history persistence — proposed, not built.** Add a `set_grades` SQL table keyed by `match_id` storing overall letter/score, per-category scores, per-stat values + scores, `baseline_version`, and `generated_at`. Insert from `watcher.ts` `handleRankedGame` when grading runs; optionally insert from the dev test panel too. Surfaces as a **premium-only** Grade History tab.
+
+### Stat fixes applied (match slippi-js exactly)
+
+All fixes are committed. Live parser (`slp_parser.ts`) and Python pipeline (`parse_hf_replays.py`) are in sync.
+
+| Stat | Bug | Fix |
+|------|-----|-----|
+| L-cancel | Counted every frame in aerial state (inflated) | Now counts once per new aerial-action transition (states 65–74), matching slippi-js `isNewAction` guard |
+| IPM | Counted button state-changes (`diff != 0`) | Now Hamming weight of rising edges on 12 digital buttons (`(~prev & cur) & 0xfff`), matching `buttonInputCount` |
+| IPM (rollback) | Rollback frames caused duplicate pre-frame events, inflating count | `maxPreFrame` guard: skip pre-frame events for already-seen frame numbers |
+| NWR | Used `oppConvActive` state flag (approximate) | Now tracks `playerNeutralWins/oppNeutralWins` — neutral-win iff opponent wasn't actively converting when conversion started |
+| OPK | Dying state (0–10) is neither stun nor control; conversion lingered through respawn, causing next conversion to be missed | Terminate conversion immediately on stock loss (detects `opp.stocks < prev`), matching slippi-js |
+| Conversion data | Rollback post-frame duplicates in `frameData` inflated conversion counts | Deduplicate `frameData` per port by keeping last occurrence of each frame number |
+
+Accuracy vs slippi-js on 5 test sets: OPK ✓ exact, L-C ✓ exact, IPM ±2, NWR ±2%, D/O ±1 (methodological: we use peak-pct-per-stock; slippi-js uses per-conversion move damage — consistent across benchmark and live parser so grading percentiles are valid).
 
 ---
 
