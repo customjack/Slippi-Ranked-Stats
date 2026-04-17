@@ -23,6 +23,7 @@ Outputs grade_baselines.json with three grouping dimensions:
 Usage:
     python scripts/parse_hf_replays.py [--character FALCO] [--batch-size 200]
                                         [--output scripts/grade_baselines.json]
+    python scripts/parse_hf_replays.py --character ALL   # parse every character
 
 Requirements: peppi-py, numpy, huggingface_hub
     (install in a Python 3.10+ venv)
@@ -92,6 +93,19 @@ MIN_MATCHUP_SAMPLES = 20
 DL_WORKERS = 8  # concurrent download threads (I/O-bound, threads are fine)
 
 CHECKPOINT_FILE = "parse_hf_checkpoint.json"
+
+# All character directories in the HuggingFace dataset.
+# Ordered by replay count (smallest first → quick progress early, big chars last).
+ALL_CHAR_DIRS = [
+    "PICHU", "BOWSER", "MEWTWO", "NESS", "KIRBY",            # <200–400
+    "ROY", "YLINK", "GAMEANDWATCH", "MARIO", "LINK",          # 400–800
+    "DK", "DOC", "PIKACHU", "YOSHI", "LUIGI",                 # 1k–2.3k
+    "ICE_CLIMBERS", "GANONDORF", "SAMUS",                      # 2.5k–3.6k
+    "JIGGLYPUFF", "PEACH",                                     # 5k–6.7k
+    "ZELDA_SHEIK",                                             # 21k
+    "CPTFALCON", "MARTH",                                      # 33k–36k
+    "FALCO", "FOX",                                            # 42k–56k
+]
 
 # ── Action-state predicates (mirrors slp_parser.ts exactly) ──────────────────
 
@@ -514,68 +528,54 @@ def accumulate_matchup_stats(accum: dict, player_char: str, opp_char: str, stats
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Parse Slippi replays from HuggingFace dataset with peppi-py"
-    )
-    parser.add_argument("--character",  default="FALCO",
-                        help="Character directory in the dataset (default: FALCO)")
-    parser.add_argument("--batch-size", type=int, default=500,
-                        help="Files to download per batch (default: 500)")
-    parser.add_argument("--dl-workers", type=int, default=DL_WORKERS,
-                        help=f"Concurrent download threads (default: {DL_WORKERS})")
-    parser.add_argument("--output",     default=os.path.join(os.path.dirname(__file__), "grade_baselines.json"),
-                        help="Output path for grade_baselines.json")
-    parser.add_argument("--checkpoint", default=os.path.join(os.path.dirname(__file__), CHECKPOINT_FILE),
-                        help="Checkpoint file for resume support")
-    parser.add_argument("--merge",      action="store_true",
-                        help="Merge into existing baselines instead of overwriting")
-    args = parser.parse_args()
-
-    # List all files from HuggingFace
-    all_files = list_all_files(args.character)
+def process_character_dir(
+    character: str,
+    batch_size: int,
+    dl_workers: int,
+    checkpoint_path: str,
+    # Shared accumulators (mutated in-place across characters)
+    by_player_char: dict,
+    by_opponent_char: dict,
+    by_matchup: dict,
+    overall_accum: dict,
+    # Shared counters — passed as a mutable dict
+    counters: dict,
+) -> bool:
+    """
+    Download + parse all replays from a single character directory.
+    Returns True on success, False if no files found.
+    """
+    all_files = list_all_files(character)
     if not all_files:
-        print("ERROR: No files found.", file=sys.stderr)
-        sys.exit(1)
+        print(f"  WARNING: No files found for {character}, skipping", flush=True)
+        return False
 
-    # Load checkpoint for resume
-    checkpoint = load_checkpoint(args.checkpoint)
-    processed_set = set(checkpoint["processed_files"])
+    # Load checkpoint for resume within this character
+    checkpoint = load_checkpoint(checkpoint_path)
+    processed_set = set(checkpoint.get("processed_files", []))
     remaining = [f for f in all_files if f not in processed_set]
 
-    # Restore accumulators from checkpoint
-    by_player_char  = checkpoint.get("by_player_char", {})
-    by_opponent_char = checkpoint.get("by_opponent_char", {})
-    by_matchup      = checkpoint.get("by_matchup", {})
-    overall_accum   = checkpoint.get("overall", {s: [] for s in STAT_KEYS})
-    if not overall_accum:
-        overall_accum = {s: [] for s in STAT_KEYS}
-    total_processed = checkpoint.get("total_processed", 0)
-    total_errors    = checkpoint.get("total_errors", 0)
+    if not remaining:
+        print(f"  {character}: all {len(all_files)} files already processed (checkpoint)", flush=True)
+        return True
 
-    print(f"\nResume: {len(processed_set)} already done, {len(remaining)} remaining")
-    print(f"Batch size: {args.batch_size}")
-    print(f"Checkpoint: {args.checkpoint}")
-    print(f"Output: {args.output}\n", flush=True)
+    print(f"  Resume: {len(processed_set)} already done, {len(remaining)} remaining", flush=True)
 
-    # Process in batches
-    download_dir = os.path.join("/tmp", f"hf_parse_{args.character}")
+    download_dir = os.path.join("/tmp", f"hf_parse_{character}")
     batch_num = 0
-    t_start = time.time()
+    t_char_start = time.time()
 
-    for batch_start in range(0, len(remaining), args.batch_size):
-        batch_files = remaining[batch_start:batch_start + args.batch_size]
+    for batch_start in range(0, len(remaining), batch_size):
+        batch_files = remaining[batch_start:batch_start + batch_size]
         batch_num += 1
         batch_processed = 0
         batch_errors = 0
 
-        print(f"\n{'='*60}")
-        print(f"Batch {batch_num}: downloading {len(batch_files)} files...")
-        print(f"  Progress: {len(processed_set)}/{len(all_files)} total "
+        print(f"\n  Batch {batch_num}: downloading {len(batch_files)} files...")
+        print(f"    {character} progress: {len(processed_set)}/{len(all_files)} "
               f"({100*len(processed_set)/len(all_files):.1f}%)")
         t_batch = time.time()
 
-        # Download batch (concurrent — I/O-bound so threads are ideal)
         def download_one(file_path):
             local = hf_hub_download(
                 repo_id=REPO_ID,
@@ -586,26 +586,25 @@ def main():
             return (file_path, local)
 
         local_paths = []
-        with ThreadPoolExecutor(max_workers=args.dl_workers) as dl_pool:
+        with ThreadPoolExecutor(max_workers=dl_workers) as dl_pool:
             futures = {dl_pool.submit(download_one, fp): fp for fp in batch_files}
             try:
-                for future in as_completed(futures, timeout=300):  # 5 min max per batch
+                for future in as_completed(futures, timeout=300):
                     try:
                         local_paths.append(future.result(timeout=60))
                     except Exception:
-                        total_errors += 1
+                        counters["total_errors"] += 1
                         batch_errors += 1
             except TimeoutError:
-                # Some downloads stalled — cancel remaining and move on
                 stalled = sum(1 for f in futures if not f.done())
-                print(f"  WARNING: {stalled} downloads timed out, skipping", flush=True)
+                print(f"    WARNING: {stalled} downloads timed out, skipping", flush=True)
                 for f in futures:
                     f.cancel()
-                total_errors += stalled
+                counters["total_errors"] += stalled
                 batch_errors += stalled
 
         dl_time = time.time() - t_batch
-        print(f"  Downloaded {len(local_paths)} files in {dl_time:.1f}s", flush=True)
+        print(f"    Downloaded {len(local_paths)} files in {dl_time:.1f}s", flush=True)
 
         # Parse batch
         t_parse = time.time()
@@ -627,35 +626,47 @@ def main():
                 batch_errors += 1
 
             processed_set.add(file_path)
-            total_processed += 1
+            counters["total_processed"] += 1
 
         parse_time = time.time() - t_parse
-        total_time = time.time() - t_start
 
         # Clean up downloaded files
         if os.path.exists(download_dir):
             shutil.rmtree(download_dir, ignore_errors=True)
 
-        print(f"  Parsed {batch_processed} games ({batch_errors} errors) in {parse_time:.1f}s")
-        print(f"  Rate: {len(local_paths)/max(parse_time, 0.001):.0f} parses/sec")
-        print(f"  Total: {len(processed_set)}/{len(all_files)} "
+        char_elapsed = time.time() - t_char_start
+        print(f"    Parsed {batch_processed} games ({batch_errors} errors) in {parse_time:.1f}s")
+        print(f"    Rate: {len(local_paths)/max(parse_time, 0.001):.0f} parses/sec")
+        print(f"    {character}: {len(processed_set)}/{len(all_files)} "
               f"({100*len(processed_set)/len(all_files):.1f}%) "
-              f"in {total_time:.0f}s", flush=True)
+              f"in {char_elapsed:.0f}s", flush=True)
 
-        # Save checkpoint
-        checkpoint = {
+        # Save per-character checkpoint (just processed file list for this char)
+        save_checkpoint(checkpoint_path, {
             "processed_files": list(processed_set),
-            "by_player_char": by_player_char,
-            "by_opponent_char": by_opponent_char,
-            "by_matchup": by_matchup,
-            "overall": overall_accum,
-            "total_processed": total_processed,
-            "total_errors": total_errors,
-        }
-        save_checkpoint(args.checkpoint, checkpoint)
+        })
 
-    # ── Build final output ────────────────────────────────────────────────────
+    char_elapsed = time.time() - t_char_start
+    print(f"\n  {character} COMPLETE: {len(all_files)} files in {char_elapsed:.0f}s "
+          f"({counters['total_errors']} cumulative errors)", flush=True)
 
+    # Clean up per-character checkpoint on success
+    if os.path.exists(checkpoint_path):
+        os.remove(checkpoint_path)
+
+    return True
+
+
+def build_and_write_output(
+    by_player_char: dict,
+    by_opponent_char: dict,
+    by_matchup: dict,
+    overall_accum: dict,
+    total_processed: int,
+    source_label: str,
+    output_path: str,
+):
+    """Compute percentiles from accumulators and write grade_baselines.json."""
     print(f"\n{'='*60}")
     print(f"Building baselines from {total_processed} processed games...")
 
@@ -687,52 +698,139 @@ def main():
                 del section[player_char]
         return section
 
-    # Overall entry
     overall_n = max((len(overall_accum.get(k, [])) for k in STAT_KEYS), default=0)
     overall_entry = {"sample_size": overall_n}
     for key in STAT_KEYS:
         overall_entry[key] = compute_percentiles(overall_accum.get(key, []))
 
     output = {
-        "generated_at":    datetime.now(timezone.utc).isoformat(),
-        "source":          f"huggingface/{REPO_ID}/{args.character}",
-        "replay_count":    total_processed,
-        "by_player_char":  build_char_section(by_player_char),
+        "generated_at":     datetime.now(timezone.utc).isoformat(),
+        "source":           source_label,
+        "replay_count":     total_processed,
+        "by_player_char":   build_char_section(by_player_char),
         "by_opponent_char": build_char_section(by_opponent_char),
-        "by_matchup":      build_matchup_section(by_matchup),
+        "by_matchup":       build_matchup_section(by_matchup),
     }
     output["by_player_char"]["_overall"]   = overall_entry
     output["by_opponent_char"]["_overall"] = overall_entry
 
-    # Optionally merge with existing baselines
-    if args.merge and os.path.exists(args.output):
-        print(f"Merging with existing {args.output}...")
-        with open(args.output, 'r') as f:
-            existing = json.load(f)
-        # New data overwrites per-character entries but keeps chars not in new data
-        for section_key in ["by_player_char", "by_opponent_char"]:
-            if section_key in existing:
-                for char_name, char_data in existing[section_key].items():
-                    if char_name not in output[section_key]:
-                        output[section_key][char_name] = char_data
-        if "by_matchup" in existing:
-            for pc, opp_dict in existing["by_matchup"].items():
-                if pc not in output["by_matchup"]:
-                    output["by_matchup"][pc] = opp_dict
-
-    with open(args.output, 'w', encoding='utf-8') as f:
+    with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(output, f, indent=2)
 
     player_chars = sorted(k for k in output["by_player_char"] if k != "_overall")
-    print(f"\nBaselines written to: {args.output}")
+    matchup_count = sum(len(v) for v in output["by_matchup"].values())
+    print(f"\nBaselines written to: {output_path}")
     print(f"Player chars ({len(player_chars)}): {player_chars}")
-    print(f"Total processed: {total_processed}")
-    print(f"Total errors: {total_errors}")
+    print(f"Matchup entries: {matchup_count}")
+    print(f"Total samples: {overall_n}")
 
-    # Clean up checkpoint on successful completion
-    if os.path.exists(args.checkpoint):
-        os.remove(args.checkpoint)
-        print(f"Checkpoint removed (completed successfully)")
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Parse Slippi replays from HuggingFace dataset with peppi-py"
+    )
+    parser.add_argument("--character",  default="FALCO",
+                        help="Character directory (default: FALCO). Use ALL for every character.")
+    parser.add_argument("--batch-size", type=int, default=500,
+                        help="Files to download per batch (default: 500)")
+    parser.add_argument("--dl-workers", type=int, default=DL_WORKERS,
+                        help=f"Concurrent download threads (default: {DL_WORKERS})")
+    parser.add_argument("--output",     default=os.path.join(os.path.dirname(__file__), "grade_baselines.json"),
+                        help="Output path for grade_baselines.json")
+    args = parser.parse_args()
+
+    # Determine which characters to process
+    if args.character.upper() == "ALL":
+        char_dirs = ALL_CHAR_DIRS
+    else:
+        char_dirs = [args.character.upper()]
+
+    # Shared accumulators across all characters
+    by_player_char: dict  = {}
+    by_opponent_char: dict = {}
+    by_matchup: dict      = {}
+    overall_accum: dict   = {s: [] for s in STAT_KEYS}
+    counters = {"total_processed": 0, "total_errors": 0}
+
+    # Load global checkpoint (tracks which characters are fully done)
+    scripts_dir = os.path.dirname(__file__)
+    global_ckpt_path = os.path.join(scripts_dir, "parse_hf_global_checkpoint.json")
+    global_ckpt = {}
+    if os.path.exists(global_ckpt_path):
+        with open(global_ckpt_path, 'r') as f:
+            global_ckpt = json.load(f)
+    completed_chars = set(global_ckpt.get("completed_chars", []))
+
+    t_start = time.time()
+
+    print(f"{'='*60}")
+    print(f"HuggingFace parse — {len(char_dirs)} character(s), {len(STAT_KEYS)} stats")
+    print(f"Already completed: {sorted(completed_chars) if completed_chars else '(none)'}")
+    print(f"{'='*60}", flush=True)
+
+    for i, char_dir in enumerate(char_dirs, 1):
+        if char_dir in completed_chars:
+            print(f"\n[{i}/{len(char_dirs)}] {char_dir} — SKIPPED (already complete)", flush=True)
+            continue
+
+        elapsed = time.time() - t_start
+        print(f"\n{'='*60}")
+        print(f"[{i}/{len(char_dirs)}] {char_dir} — starting (elapsed: {elapsed/60:.1f}m)")
+        print(f"{'='*60}", flush=True)
+
+        # Per-character checkpoint (for resume within a character)
+        char_ckpt_path = os.path.join(scripts_dir, f"parse_hf_checkpoint_{char_dir}.json")
+
+        success = process_character_dir(
+            character=char_dir,
+            batch_size=args.batch_size,
+            dl_workers=args.dl_workers,
+            checkpoint_path=char_ckpt_path,
+            by_player_char=by_player_char,
+            by_opponent_char=by_opponent_char,
+            by_matchup=by_matchup,
+            overall_accum=overall_accum,
+            counters=counters,
+        )
+
+        if success:
+            completed_chars.add(char_dir)
+            # Save global progress
+            save_checkpoint(global_ckpt_path, {
+                "completed_chars": sorted(completed_chars),
+                "total_processed": counters["total_processed"],
+                "total_errors": counters["total_errors"],
+                "last_updated": datetime.now(timezone.utc).isoformat(),
+            })
+
+            # Write intermediate baselines after each character so progress is visible
+            if len(char_dirs) > 1:
+                elapsed = time.time() - t_start
+                print(f"\n  Writing intermediate baselines ({len(completed_chars)}/{len(char_dirs)} chars, "
+                      f"{elapsed/60:.1f}m elapsed)...", flush=True)
+                source = f"huggingface/{REPO_ID}/ALL ({len(completed_chars)}/{len(char_dirs)})"
+                build_and_write_output(
+                    by_player_char, by_opponent_char, by_matchup, overall_accum,
+                    counters["total_processed"], source, args.output,
+                )
+
+    # ── Final output ──────────────────────────────────────────────────────────
+    total_time = time.time() - t_start
+    print(f"\n{'='*60}")
+    print(f"ALL CHARACTERS COMPLETE in {total_time/60:.1f} minutes")
+    print(f"Processed: {counters['total_processed']}  Errors: {counters['total_errors']}")
+    print(f"{'='*60}", flush=True)
+
+    source = f"huggingface/{REPO_ID}/ALL" if len(char_dirs) > 1 else f"huggingface/{REPO_ID}/{char_dirs[0]}"
+    build_and_write_output(
+        by_player_char, by_opponent_char, by_matchup, overall_accum,
+        counters["total_processed"], source, args.output,
+    )
+
+    # Clean up global checkpoint on full completion
+    if os.path.exists(global_ckpt_path):
+        os.remove(global_ckpt_path)
+        print("Global checkpoint removed (all characters completed)")
 
 
 if __name__ == "__main__":

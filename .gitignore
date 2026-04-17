@@ -10,7 +10,8 @@ CHANGELOG.md
 release.ps1
 assets/
 scripts/logs/
-scripts/parse_hf_checkpoint.json
+scripts/parse_hf_checkpoint*.json
+scripts/parse_hf_global_checkpoint.json
 __pycache__/
 *.pyc
 .venv/

@@ -104,7 +104,7 @@ export interface CharacterBenchmarks {{
   avg_stock_duration:      StatThresholds;
   respawn_defense_rate:    StatThresholds;
   comeback_rate:           StatThresholds;
-  wavedash_miss_rate:      StatThresholds;  // inverted: lower = better
+  wavedash_miss_rate?:     StatThresholds;  // inverted: lower = better (optional — pending detection fix)
 }}
 
 export interface Benchmarks {{
