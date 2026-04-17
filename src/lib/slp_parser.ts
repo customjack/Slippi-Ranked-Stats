@@ -501,10 +501,11 @@ function parseEventStream(data: Uint8Array): StreamResult {
           if (!frameData[port]) frameData[port] = [];
           frameData[port].push({ frame: frameNum, state: actionState, x, y, percent, stocks });
 
-          // L-cancel status at offset 0x31 = 49 (added in replay spec v3.0.0)
+          // L-cancel status at offset 0x33 = 51 (added in replay spec v3.0.0)
+          // last_ground_id is uint16 at 0x30–0x31, jumps_remaining at 0x32, l_cancel at 0x33
           // 0x01 = success, 0x02 = failure; 0x00 = no attempt this frame
-          if (size >= 50) {
-            const lcStatus = data[ps + 49];
+          if (size >= 52) {
+            const lcStatus = data[ps + 51];
             if (lcStatus === 1 || lcStatus === 2) {
               lCancelAttempts[port] = (lCancelAttempts[port] ?? 0) + 1;
               if (lcStatus === 1) lCancelSuccesses[port] = (lCancelSuccesses[port] ?? 0) + 1;
