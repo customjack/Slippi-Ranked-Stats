@@ -130,3 +130,11 @@ Anything that needs to travel between machines must be in git. Per-machine state
 - `scripts/logs/` (gitignored)
 
 When picking up work on a different machine, this file plus `git log --oneline` is the source of truth.
+
+### Active rescan (as of 2026-04-17)
+
+**Do NOT touch these two files on any other machine while the rescan is running:**
+- `scripts/grade_baselines.json`
+- `src/lib/grade-benchmarks.ts`
+
+The primary machine is running `parse_hf_replays.py --character ALL` (~200k replays, 2–4 hrs). When it finishes it will commit and push both files. Pull before doing anything that reads benchmarks.
