@@ -355,24 +355,33 @@ def compute_game_stats(game, player_idx: int, opp_idx: int) -> dict | None:
     comeback_rate         = (1.0 if player_won else 0.0) if bool(np.any(player_behind)) else None
 
     # ── Wavedash miss rate ───────────────────────────────────────────────────
-    # EscapeAir (235) → LandingFallSpecial (189) = success; → regular landing = miss
-    ESCAPE_AIR        = 235
-    LANDING_FALL_SPEC = 189
-    REGULAR_LANDING   = {3, 4}
+    # Mirrors slp_parser.ts detection: Jump (near ground) → Airdodge (within 4f)
+    # → LandingFallSpecial (within 4f) = success. Airdodge without LandingFallSpecial = miss.
+    JUMP_STATES       = {24, 25}   # JumpF, JumpB
+    ESCAPE_AIR        = 235        # EscapeAir (airdodge)
+    LANDING_FALL_SPEC = 189        # LandingFallSpecial (wavedash landing)
+    WD_JUMP_Y         = 5.0        # must be near ground when jumping
+    WD_DODGE_F        = 4          # airdodge must come within 4 frames of jump
+    WD_LAND_F         = 4          # landing must come within 4 frames of airdodge
 
-    esc_frs  = np.where((p_state[1:] == ESCAPE_AIR) & (p_state[:-1] != ESCAPE_AIR))[0] + 1
-    wd_ok = wd_miss = 0
-    for fe in esc_frs:
-        for fw in range(int(fe) + 1, min(int(fe) + 6, n_frames)):
-            s = int(p_state[fw])
-            if s == LANDING_FALL_SPEC:
-                wd_ok += 1; break
-            if s in REGULAR_LANDING:
-                if p_y is None or float(p_y[fe]) < 15.0:
-                    wd_miss += 1
-                break
-    total_wd = wd_ok + wd_miss
-    wavedash_miss_rate = wd_miss / total_wd if total_wd > 0 else None
+    wd_attempts = 0; wd_successes = 0
+    jump_frame = -1; dodge_frame = -1
+    prev_state = -1
+    for fi in range(n_frames):
+        s = int(p_state[fi])
+        if s != prev_state:
+            if s in JUMP_STATES and (p_y is None or float(p_y[fi]) < WD_JUMP_Y):
+                jump_frame = fi; dodge_frame = -1
+            elif s == ESCAPE_AIR and jump_frame >= 0 and fi <= jump_frame + WD_DODGE_F:
+                wd_attempts += 1; dodge_frame = fi; jump_frame = -1
+            elif s == LANDING_FALL_SPEC and dodge_frame >= 0 and fi <= dodge_frame + WD_LAND_F:
+                wd_successes += 1; dodge_frame = -1
+        if jump_frame >= 0 and fi > jump_frame + WD_DODGE_F + 1:
+            jump_frame = -1
+        if dodge_frame >= 0 and fi > dodge_frame + WD_LAND_F + 1:
+            dodge_frame = -1
+        prev_state = s
+    wavedash_miss_rate = (wd_attempts - wd_successes) / wd_attempts if wd_attempts > 0 else None
 
     # ── Assemble results ─────────────────────────────────────────────────────
     return {

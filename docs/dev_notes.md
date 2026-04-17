@@ -23,29 +23,28 @@ Wired end-to-end and gated behind `$isPremium`. Visible to all premium users in 
 For each stat in a completed set, `percentileScore(value, thresholds, inverted)` linearly interpolates between bench percentiles to produce a 0–100 score. Letter grade thresholds: S ≥ 95, A ≥ 90, B ≥ 75, C ≥ 50, D ≥ 25, F < 25.
 
 **Algorithm details (as of current session):**
-- `INVERTED_STATS`: `openings_per_kill`, `avg_kill_percent`, `defensive_option_rate` (lower = better)
+- `INVERTED_STATS`: `openings_per_kill`, `avg_kill_percent`, `wavedash_miss_rate` (lower = better)
 - `avg_kill_percent` and `avg_death_percent` are **skipped** when `baselineSource === "overall"` — the `_overall` bucket has identical values for both by symmetric pooling, making scores misleading. Only scored with character-specific data.
 - **Win bonus**: +5 added to the composite score for a set win (capped at 100). Winning a set reflects adaptability and reads not captured by raw metrics.
 - **Benchmark lookup**: matchup (player × opp) → player char → `_overall`. The display shows which tier was used.
+- **Category weights**: Punish 35%, Neutral 35%, Defense 25%, Execution 5%.
 
-**Stats by category:**
-| Category  | Stats                                                          |
-|-----------|----------------------------------------------------------------|
-| Neutral   | `neutral_win_ratio`, `counter_hit_rate`                        |
-| Punish    | `damage_per_opening`, `openings_per_kill`, `avg_kill_percent`  |
-| Defense   | `avg_death_percent`, `defensive_option_rate`                   |
-| Execution | `l_cancel_ratio`, `inputs_per_minute`                          |
+**Stats by category (18 total):**
+| Category  | Stats                                                                                                 |
+|-----------|-------------------------------------------------------------------------------------------------------|
+| Neutral   | `neutral_win_ratio`, `opening_conversion_rate`, `stage_control_ratio`, `lead_maintenance_rate`, `comeback_rate` |
+| Punish    | `damage_per_opening`, `openings_per_kill`, `avg_kill_percent`, `edgeguard_success_rate`, `tech_chase_rate`, `hit_advantage_rate` |
+| Defense   | `avg_death_percent`, `recovery_success_rate`, `avg_stock_duration`, `respawn_defense_rate`             |
+| Execution | `l_cancel_ratio`, `inputs_per_minute`, `wavedash_miss_rate`                                           |
 
-**All 9 stats now have real community baselines** (from HuggingFace parse, see below):
-- `counter_hit_rate` — % of neutral wins where opponent was mid-attack when opened. Measures neutral read quality. Tracked in `slp_parser.ts` via `isAttacking()`: states 44–74 (ground+aerial attacks) + 0xB0–0xB2 (specials).
-- `defensive_option_rate` — player's roll/spotdodge uses per minute (inverted). Tracked via transitions into states 29 (roll fwd), 30 (roll back), 31 (spotdodge). Fewer = better defensive decision-making.
-- `inputs_per_minute` — computed from `pre.buttons_physical` frame changes via peppi-py. Character-specific (Fox/Falco ~250 IPM, Puff ~150 IPM).
+**All-character baselines** generated from full HuggingFace dataset (221,942 replays across all 25 characters, 430k samples). 17/18 stats have real benchmarks. `wavedash_miss_rate` had a detection bug (wrong state IDs) — fixed in parser, pending re-run.
 
 ### Open issues before shipping
 
-1. ~~Low per-char sample sizes~~ **Resolved.** HuggingFace Falco parse (42,547 replays) provides massive sample sizes for all characters Falco faces. Combined with 5k SlippiLab pull for broader coverage.
-2. ~~`inputs_per_minute` placeholder~~ **Resolved.** peppi-py exposes `pre.buttons_physical` for IPM computation. All 9 stats now have real community baselines.
-3. **Grade history persistence — proposed, not built.** Add a `set_grades` SQL table keyed by `match_id` storing overall letter/score, per-category scores, per-stat values + scores, `baseline_version`, and `generated_at`. Insert from `watcher.ts` `handleRankedGame` when grading runs; optionally insert from the dev test panel too. Surfaces as a **premium-only** Grade History tab.
+1. ~~Low per-char sample sizes~~ **Resolved.** Full dataset parse covers all 25 characters with 26 having ≥50 samples, 283 matchup entries.
+2. ~~`inputs_per_minute` placeholder~~ **Resolved.** All stats except `wavedash_miss_rate` have real community baselines.
+3. **`wavedash_miss_rate` needs re-parse.** Detection logic fixed (ported from TS parser: Jump→Airdodge→LandingFallSpecial sequence) but baselines are still empty. Next `--character ALL` run will populate it.
+4. **Grade history persistence — proposed, not built.** Add a `set_grades` SQL table keyed by `match_id` storing overall letter/score, per-category scores, per-stat values + scores, `baseline_version`, and `generated_at`. Insert from `watcher.ts` `handleRankedGame` when grading runs; optionally insert from the dev test panel too. Surfaces as a **premium-only** Grade History tab.
 
 ---
 
@@ -88,8 +87,10 @@ Parses replays from the HuggingFace `erickfm/slippi-public-dataset-v3.7` dataset
 
 ```bash
 # Requires Python 3.10+ venv with peppi-py, numpy, huggingface_hub
-python3 scripts/parse_hf_replays.py --character FALCO --batch-size 500 --dl-workers 8
+python3 scripts/parse_hf_replays.py --character ALL --batch-size 500 --dl-workers 8
 ```
+
+Supports `--character ALL` to loop through all 25 character directories in a single run with shared accumulators. Per-character checkpoints for resume, global checkpoint tracks completed characters. Writes intermediate `grade_baselines.json` after each character completes.
 
 ### `scripts/global_baseline_parser.py`
 
@@ -97,7 +98,7 @@ Streams a hypothetical 140 GB JSON dump of global Slippi match data using `ijson
 
 ### `scripts/regen_benchmarks.py`
 
-Reads `scripts/grade_baselines.json` and emits `src/lib/grade-benchmarks.ts`. Run after every fresh parse. Now handles all 9 stats (no more placeholders) and the `by_matchup` structure.
+Reads `scripts/grade_baselines.json` and emits `src/lib/grade-benchmarks.ts`. Run after every fresh parse. Handles all 18 stats and the `by_matchup` structure. Stats with no data (null p50) are skipped and marked optional in the TS interface.
 
 ```bash
 python3 scripts/regen_benchmarks.py

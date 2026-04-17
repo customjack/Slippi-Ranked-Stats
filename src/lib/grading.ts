@@ -95,19 +95,9 @@ const INVERTED_STATS = new Set([
  * - counter_hit_rate: can be LOWER against stronger opponents who probe more carefully
  * - defensive_option_rate: naturally higher when facing stronger pressure
  */
-// All new stats are pending community benchmarks. Once grade_baselines.json is
-// regenerated with these fields, remove them from this set to enable scoring.
+// Stats shown in the breakdown but excluded from category scoring.
+// wavedash_miss_rate: detection bug in parser — 0 samples in baselines (pending fix).
 export const DISPLAY_ONLY_STATS = new Set<keyof SetGrade["breakdown"]>([
-  "opening_conversion_rate",
-  "stage_control_ratio",
-  "lead_maintenance_rate",
-  "edgeguard_success_rate",
-  "tech_chase_rate",
-  "hit_advantage_rate",
-  "recovery_success_rate",
-  "avg_stock_duration",
-  "respawn_defense_rate",
-  "comeback_rate",
   "wavedash_miss_rate",
 ]);
 
