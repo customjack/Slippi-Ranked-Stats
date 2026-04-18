@@ -298,7 +298,7 @@
             <span style="color: #e74c3c; font-weight: 600">{$discordUsername ?? "Your account"}</span>
             {" "}isn't showing a supporter role. Just subscribed? Roles can take a few minutes to sync.
           {:else}
-            Premium adds per-category scores, the full 14-stat breakdown, and matchup-specific baselines.
+            Premium adds per-category scores, the full 14-stat breakdown, matchup-specific baselines, and unlocks the Live Session tab.
           {/if}
         </div>
       </div>
