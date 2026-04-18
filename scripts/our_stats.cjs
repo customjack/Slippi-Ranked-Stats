@@ -280,7 +280,8 @@ function parseGame(filepath, connectCode) {
 
           finalStocks[port] = stocks;
           if (!frameData[port]) frameData[port] = [];
-          frameData[port].push({ frame: frameNum, state, x, y, percent, stocks });
+          const lastHitBy = data[ps + 31];
+          frameData[port].push({ frame: frameNum, state, x, y, percent, stocks, lastHitBy });
 
           // L-cancel (once per new aerial action)
           if (size >= 51 && state >= 65 && state <= 74
@@ -389,9 +390,21 @@ function parseGame(filepath, connectCode) {
   let oppConvActive=false, oppResetCtr=0, oppConvCount=0, oppNeutralWins=0;
   let prevOppStocks=-1, prevPlayerStocks=-1, prevOppStun=false;
 
+  const attributedKillPcts=[], attributedDeathPcts=[];
+
   for (const snap of playerFrames) {
     const opp = oppMap.get(snap.frame);
     if (!opp) continue;
+
+    const oppStun=isInStun(opp.state), oppCtrl=isInControl(opp.state);
+    const playerStun=isInStun(snap.state), playerCtrl=isInControl(snap.state);
+
+    if (prevOppStocks >= 0 && opp.stocks < prevOppStocks) {
+      if (opp.lastHitBy === playerPort) attributedKillPcts.push(opp.percent);
+    }
+    if (prevPlayerStocks >= 0 && snap.stocks < prevPlayerStocks) {
+      if (snap.lastHitBy === oppPort) attributedDeathPcts.push(snap.percent);
+    }
 
     if (prevOppStocks >= 0 && opp.stocks < prevOppStocks && playerConvActive) {
       if (convHitCount >= 2) openingConvCount++;
@@ -402,9 +415,6 @@ function parseGame(filepath, connectCode) {
     }
     prevOppStocks    = opp.stocks;
     prevPlayerStocks = snap.stocks;
-
-    const oppStun=isInStun(opp.state), oppCtrl=isInControl(opp.state);
-    const playerStun=isInStun(snap.state), playerCtrl=isInControl(snap.state);
 
     if (oppStun) {
       if (!playerConvActive) {
@@ -443,8 +453,9 @@ function parseGame(filepath, connectCode) {
 
   const lc_att  = lCancelAtt[playerPort]  || 0;
   const lc_succ = lCancelSucc[playerPort] || 0;
-  const oppKillPcts  = (stockPercents[oppPort]    || []).filter(p => p > 0);
-  const playerDthPcts = (stockPercents[playerPort] || []).filter(p => p > 0);
+  // Kill%/Death% use attributed percents (excludes SDs), matching slippi-js lastHitBy logic.
+  const oppKillPcts   = attributedKillPcts;
+  const playerDthPcts = attributedDeathPcts;
 
   // ── Advanced stats ────────────────────────────────────────────────────────
   const oppByFrame = new Map();
@@ -456,7 +467,7 @@ function parseGame(filepath, connectCode) {
     result,
     kills,
     // ── Slippi-comparable stats ──
-    opk:        kills > 0           ? playerConvCount / kills              : null,
+    opk:        attributedKillPcts.length > 0 ? playerConvCount / attributedKillPcts.length : null,
     dpo:        playerConvCount > 0 ? dmgDealt / playerConvCount           : null,
     nwr:        nwTotal > 0         ? playerNeutralWins / nwTotal          : null,
     lc:         lc_att > 0          ? lc_succ / lc_att                     : null,

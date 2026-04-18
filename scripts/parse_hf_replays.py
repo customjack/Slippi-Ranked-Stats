@@ -346,18 +346,32 @@ def compute_game_stats(game, player_idx: int, opp_idx: int) -> dict | None:
             if duration_min > 0:
                 ipm = input_changes / duration_min
 
-    # ── Kill / death percent tracking ────────────────────────────────────────
+    # ── Kill / death percent tracking ─────────────────────────────────────────
+    # Use lastHitBy (post-frame field) for attribution: a stock loss is player's
+    # kill only when opp's lastHitBy == player_idx, matching slippi-js exactly.
     o_stock_diff = np.diff(o_stocks.astype(np.int16))
     p_stock_diff = np.diff(p_stocks.astype(np.int16))
 
-    kill_frames  = np.where(o_stock_diff < 0)[0]
-    death_frames = np.where(p_stock_diff < 0)[0]
+    raw_kill_frames  = np.where(o_stock_diff < 0)[0]
+    raw_death_frames = np.where(p_stock_diff < 0)[0]
 
-    kill_percents  = [p for p in o_pct[kill_frames].tolist()  if p > 0]
-    death_percents = [p for p in p_pct[death_frames].tolist() if p > 0]
+    try:
+        o_last_hit_by = np.array(o_post.last_hit_by, copy=False)
+        p_last_hit_by = np.array(p_post.last_hit_by, copy=False)
+        kill_frames  = [f for f in raw_kill_frames  if int(o_last_hit_by[f]) == player_idx]
+        death_frames = [f for f in raw_death_frames if int(p_last_hit_by[f]) == opp_idx]
+    except Exception:
+        # Fallback if last_hit_by unavailable in this peppi version
+        kill_frames  = [f for f in raw_kill_frames  if float(o_pct[f]) > 0]
+        death_frames = [f for f in raw_death_frames if float(p_pct[f]) > 0]
+
+    kill_percents  = [float(o_pct[f]) for f in kill_frames]
+    death_percents = [float(p_pct[f]) for f in death_frames]
     kills = len(kill_percents)
 
-    total_damage = float(np.sum(o_pct[kill_frames])) if len(kill_frames) > 0 else 0.0
+    # total_damage counts all damage dealt (all stock losses + final stock), regardless of
+    # kill attribution. D/O = total damage / total openings.
+    total_damage = float(np.sum(o_pct[raw_kill_frames])) if len(raw_kill_frames) > 0 else 0.0
     total_damage += float(o_pct[-1])
 
     # ── Opening conversion rate ──────────────────────────────────────────────

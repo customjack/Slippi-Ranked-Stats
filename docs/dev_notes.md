@@ -61,13 +61,29 @@ All fixes are committed. Live parser (`slp_parser.ts`) and Python pipeline (`par
 | OCR (first fix) | Used ≥20% damage threshold to define "successful conversion" | Changed to `convHitCount >= 2` (re-entries into hitstun), matching slippi-js `moves.length > 1` |
 | OCR (second fix) | Multi-hit moves (Falco dair, shine repeats) appear as continuous hitstun in frame data — re-entry check missed them | Added percent-increase check: if `opp.percent > convLastOppPercent + 0.5` while already in stun, count as new hit |
 
-Accuracy vs slippi-js on 5 test sets: OPK ✓ exact, L-C ✓ exact, IPM ±2, NWR ±2%, D/O ±1 (methodological: we use peak-pct-per-stock; slippi-js uses per-conversion move damage — consistent across benchmark and live parser so grading percentiles are valid).
+**Bulk validation (256 games):**
+- L-cancel 100% exact, IPM 100% within 2/min ✓
+- D/O 96% within 1 dmg (avg +0.39 overcount; methodological difference — consistent between benchmark and live) ✓
+- NWR 88% within 3pp, OCR 81% within 3pp (slight systematic overcount) ✓
+- OPK 99% within 0.10/kill, Kill% 99% within 1pp (after `lastHitBy` fix below) ✓
 
-OCR accuracy after both fixes: **10/12 games exact, avg gap 0.7%, max gap 5.3%** vs slippi-js `successfulConversions.ratio`. Remaining gap is from edge cases where multi-hit timing in frame data doesn't align exactly with slippi-js's `lastAttackLanded` events.
+| Stat | Bug | Fix |
+|------|-----|-----|
+| L-cancel | Counted every frame in aerial state (inflated) | Now counts once per new aerial-action transition (states 65–74), matching slippi-js `isNewAction` guard |
+| IPM | Counted button state-changes (`diff != 0`) | Now Hamming weight of rising edges on 12 digital buttons (`(~prev & cur) & 0xfff`), matching `buttonInputCount` |
+| IPM (rollback) | Rollback frames caused duplicate pre-frame events, inflating count | `maxPreFrame` guard: skip pre-frame events for already-seen frame numbers |
+| NWR | Used `oppConvActive` state flag (approximate) | Now tracks `playerNeutralWins/oppNeutralWins` — neutral-win iff opponent wasn't actively converting when conversion started |
+| OPK | Dying state (0–10) is neither stun nor control; conversion lingered through respawn, causing next conversion to be missed | Terminate conversion immediately on stock loss (detects `opp.stocks < prev`), matching slippi-js |
+| OPK/Kill%/Death% | Used `4 - finalStocks` for kill count and all stock losses for Kill% — included opponent SDs | Now uses `lastHitBy` from post-frame byte 31: stock loss attributed as player kill only when `opp.lastHitBy === playerPort`, matching slippi-js exactly |
+| Conversion data | Rollback post-frame duplicates in `frameData` inflated conversion counts | Deduplicate `frameData` per port by keeping last occurrence of each frame number |
+| OCR (first fix) | Used ≥20% damage threshold to define "successful conversion" | Changed to `convHitCount >= 2` (re-entries into hitstun), matching slippi-js `moves.length > 1` |
+| OCR (second fix) | Multi-hit moves (Falco dair, shine repeats) appear as continuous hitstun in frame data — re-entry check missed them | Added percent-increase check: if `opp.percent > convLastOppPercent + 0.5` while already in stun, count as new hit |
 
-### Pending: OCR benchmark rescan
+OCR accuracy after both fixes: **10/12 games exact, avg gap 0.7%, max gap 5.3%** vs slippi-js `successfulConversions.ratio`.
 
-`opening_conversion_rate` is in `DISPLAY_ONLY_STATS` because current benchmarks were generated with the old ≥20% definition. Both OCR fixes are already applied to all three parsers. To re-enable OCR scoring:
+### Pending: Kill%/OPK/Death% benchmark rescan
+
+Current benchmarks used old kill definition (`4 - finalStocks`, includes SDs). Live parser now uses `lastHitBy` attribution. Difference is small (SDs are rare in ranked) but for full parity:
 
 1. Run full rescan: `python3 scripts/parse_hf_replays.py --character ALL --batch-size 500 --dl-workers 8` (~6.5 hours)
 2. Run `python3 scripts/regen_benchmarks.py`

@@ -74,12 +74,13 @@ function parseUbjson(data: Uint8Array, startPos: number): [unknown, number] {
 // ── Event stream parser ────────────────────────────────────────────────────
 
 interface FrameSnapshot {
-  frame: number;
-  state: number;
-  x: number;
-  y: number;
-  percent: number;
-  stocks: number;
+  frame:     number;
+  state:     number;
+  x:         number;
+  y:         number;
+  percent:   number;
+  stocks:    number;
+  lastHitBy: number; // player_index of last attacker (0xFF = no one); matches slippi-js lastHitBy
 }
 
 interface StreamResult {
@@ -168,13 +169,14 @@ function computeConversionStats(
   oppPort: number,
   frameData: Record<number, FrameSnapshot[]>,
   totalDamageTaken: Record<number, number>,
-  finalStocks: Record<number, number>,
 ): {
   openings_per_kill: number | null;
   neutral_win_ratio: number | null;
   damage_per_opening: number | null;
   counter_hit_rate: number | null;
   opening_conversion_rate: number | null;
+  attributedKillPercents:  number[];
+  attributedDeathPercents: number[];
 } {
   const playerFrames = frameData[playerPort] ?? [];
   const oppMap       = new Map<number, FrameSnapshot>();
@@ -183,6 +185,7 @@ function computeConversionStats(
   const NULL_RESULT = {
     openings_per_kill: null, neutral_win_ratio: null, damage_per_opening: null,
     counter_hit_rate: null, opening_conversion_rate: null,
+    attributedKillPercents: [], attributedDeathPercents: [],
   };
   if (playerFrames.length === 0) return NULL_RESULT;
 
@@ -215,9 +218,28 @@ function computeConversionStats(
   let prevPlayerStocks = -1;
   let prevOppInStun    = false;
 
+  // Kill/death attribution via lastHitBy (post-frame byte 31): a stock loss is attributed
+  // to the player when the opponent's lastHitBy equals playerPort. This matches slippi-js
+  // exactly, excluding self-destructs where the opponent ran off without being hit by us.
+  const attributedKillPercents:  number[] = [];
+  const attributedDeathPercents: number[] = [];
+
   for (const snap of playerFrames) {
     const opp = oppMap.get(snap.frame);
     if (!opp) continue;
+
+    // Compute stun/control states.
+    const oppInStun    = isInStun(opp.state);
+    const oppInCtrl    = isInControl(opp.state);
+    const playerInStun = isInStun(snap.state);
+    const playerInCtrl = isInControl(snap.state);
+
+    if (prevOppStocks >= 0 && opp.stocks < prevOppStocks) {
+      if (opp.lastHitBy === playerPort) attributedKillPercents.push(opp.percent);
+    }
+    if (prevPlayerStocks >= 0 && snap.stocks < prevPlayerStocks) {
+      if (snap.lastHitBy === oppPort) attributedDeathPercents.push(snap.percent);
+    }
 
     // Terminate conversions immediately on stock loss (matches slippi-js behavior).
     // Without this, the dying state (0-10) is neither stun nor control, so the
@@ -238,11 +260,6 @@ function computeConversionStats(
     }
     prevOppStocks    = opp.stocks;
     prevPlayerStocks = snap.stocks;
-
-    const oppInStun    = isInStun(opp.state);
-    const oppInCtrl    = isInControl(opp.state);
-    const playerInStun = isInStun(snap.state);
-    const playerInCtrl = isInControl(snap.state);
 
     // ── Our conversion on opponent ────────────────────────────────────────
     if (oppInStun) {
@@ -299,16 +316,18 @@ function computeConversionStats(
   // Finalize any active conversion at game end (typically the killing blow)
   if (playerConvActive && convHitCount >= 2) openingConvCount++;
 
-  const kills   = 4 - (finalStocks[oppPort] ?? 0);
-  const nwTotal = playerNeutralWins + oppNeutralWins;
+  const kills    = attributedKillPercents.length;
+  const nwTotal  = playerNeutralWins + oppNeutralWins;
   const dmgDealt = totalDamageTaken[oppPort] ?? 0;
 
   return {
-    openings_per_kill:       kills > 0      ? playerConvCount   / kills      : null,
-    neutral_win_ratio:       nwTotal > 0    ? playerNeutralWins / nwTotal    : null,
-    damage_per_opening:      playerConvCount > 0 ? dmgDealt / playerConvCount      : null,
+    openings_per_kill:       kills > 0           ? playerConvCount   / kills           : null,
+    neutral_win_ratio:       nwTotal > 0         ? playerNeutralWins / nwTotal         : null,
+    damage_per_opening:      playerConvCount > 0 ? dmgDealt          / playerConvCount : null,
     counter_hit_rate:        null,
-    opening_conversion_rate: playerConvCount > 0 ? openingConvCount / playerConvCount : null,
+    opening_conversion_rate: playerConvCount > 0 ? openingConvCount  / playerConvCount : null,
+    attributedKillPercents,
+    attributedDeathPercents,
   };
 }
 
@@ -590,7 +609,7 @@ function parseEventStream(data: Uint8Array): StreamResult {
           if (!actionFrames[port]) actionFrames[port] = [];
           actionFrames[port].push([frameNum, actionState]);
           if (!frameData[port]) frameData[port] = [];
-          frameData[port].push({ frame: frameNum, state: actionState, x, y, percent, stocks });
+          frameData[port].push({ frame: frameNum, state: actionState, x, y, percent, stocks, lastHitBy: data[ps + 31] });
 
           // Defensive option: count each new entry into a roll/spotdodge state.
           if (DEFENSIVE_STATES.has(actionState) && !DEFENSIVE_STATES.has(prevActionState[port] ?? -1)) {
@@ -852,7 +871,7 @@ export function parseSlpBytes(
   const deaths = 4 - (stream.finalStocks[playerPort] ?? 0);
 
   const convStats = computeConversionStats(
-    playerPort, oppPort, stream.frameData, stream.totalDamageTaken, stream.finalStocks
+    playerPort, oppPort, stream.frameData, stream.totalDamageTaken
   );
   const winLoss: "win" | "loss" = (result === "win" || result === "lras_win") ? "win" : "loss";
   const advStats = computeAdvancedStats(playerPort, oppPort, stream.frameData, winLoss);
@@ -888,12 +907,12 @@ export function parseSlpBytes(
       return attempts > 0 ? successes / attempts : null;
     })(),
     avg_kill_percent: (() => {
-      const percents = stream.stockPercents[oppPort] ?? [];
-      return percents.length > 0 ? percents.reduce((a, b) => a + b, 0) / percents.length : null;
+      const p = convStats.attributedKillPercents;
+      return p.length > 0 ? p.reduce((a, b) => a + b, 0) / p.length : null;
     })(),
     avg_death_percent: (() => {
-      const percents = stream.stockPercents[playerPort] ?? [];
-      return percents.length > 0 ? percents.reduce((a, b) => a + b, 0) / percents.length : null;
+      const p = convStats.attributedDeathPercents;
+      return p.length > 0 ? p.reduce((a, b) => a + b, 0) / p.length : null;
     })(),
     defensive_option_rate: (() => {
       const opts = stream.defensiveOptions[playerPort] ?? 0;
