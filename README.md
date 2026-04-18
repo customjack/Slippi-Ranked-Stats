@@ -10,9 +10,9 @@ A desktop app for tracking and analyzing your Slippi Ranked sets. Point it at yo
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
 
 <p align="center">
-  <img src="docs/screenshots/grades.png" alt="Set grading breakdown" width="48%" />
-  &nbsp;
-  <img src="docs/screenshots/Last Session.png" alt="Live session tracking" width="48%" />
+  <img src="docs/screenshots/grades.png" alt="Set grading breakdown" width="80%" />
+  <br/><br/>
+  <img src="docs/screenshots/Last Session.png" alt="Live session tracking" width="80%" />
 </p>
 
 ---
