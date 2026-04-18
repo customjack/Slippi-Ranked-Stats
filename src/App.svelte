@@ -132,8 +132,8 @@
     { label: "🎮 Matchup Stats" },
     { label: "📊 All-Time" },
     { label: "📈 Rating History" },
+    { label: "📝 Grading" },
     { label: "🎯 Live Session" },
-    { label: "🏆 Ranked Grades" },
   ];
 </script>
 
@@ -223,9 +223,9 @@
       {:else if $activeTab === 3}
         <RatingProgression />
       {:else if $activeTab === 4}
-        <LiveRankedSession />
-      {:else if $activeTab === 5}
         <GradeHistory />
+      {:else if $activeTab === 5}
+        <LiveRankedSession />
       {/if}
     </div>
   </div>

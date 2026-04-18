@@ -2,15 +2,15 @@
  * grading.ts — Set Grading System logic.
  *
  * Grades a completed set across three scored categories:
- *   Neutral   (neutral_win_ratio, opening_conversion_rate, stage_control_ratio,
- *              lead_maintenance_rate, comeback_rate)
- *   Punish    (damage_per_opening, openings_per_kill, avg_kill_percent*,
- *              edgeguard_success_rate, tech_chase_rate, hit_advantage_rate)
- *   Defense   (avg_death_percent*, recovery_success_rate, avg_stock_duration,
- *              respawn_defense_rate)
+ *   Neutral   40% — neutral_win_ratio, opening_conversion_rate, stage_control_ratio,
+ *                    lead_maintenance_rate, comeback_rate
+ *   Punish    40% — damage_per_opening, openings_per_kill, avg_kill_percent*,
+ *                    edgeguard_success_rate, tech_chase_rate, hit_advantage_rate
+ *   Defense   20% — avg_death_percent*, recovery_success_rate, avg_stock_duration,
+ *                    respawn_defense_rate
  *
  * Execution stats (l_cancel_ratio, inputs_per_minute, wavedash_miss_rate) are
- * shown in the breakdown display but excluded from scoring:
+ * parsed and stored but excluded from scoring and not displayed as a category:
  *   - l_cancel_ratio: HF dataset benchmark is degenerate (p50–p90 all 0.0)
  *   - inputs_per_minute: not a reliable skill indicator; low variance at top level
  *   - wavedash_miss_rate: kept as context; too situational to weight fairly
@@ -39,7 +39,7 @@ import { BENCHMARKS, type StatThresholds } from "./grade-benchmarks";
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export type GradeLetter = "S" | "A" | "B" | "C" | "D" | "F";
-export type CategoryKey  = "neutral" | "punish" | "defense" | "execution";
+export type CategoryKey  = "neutral" | "punish" | "defense";
 
 export interface StatGrade {
   value:     number | null;
@@ -104,25 +104,42 @@ export const DISPLAY_ONLY_STATS = new Set<keyof SetGrade["breakdown"]>([
 ]);
 
 /** Per-stat scoring weights within a category. Unlisted stats default to 1.0. */
-const STAT_WEIGHTS: Partial<Record<keyof SetGrade["breakdown"], number>> = {};
+const STAT_WEIGHTS: Partial<Record<keyof SetGrade["breakdown"], number>> = {
+  // Neutral (sum = 1.00)
+  neutral_win_ratio:       0.30,
+  opening_conversion_rate: 0.25,
+  stage_control_ratio:     0.20,
+  lead_maintenance_rate:   0.15,
+  comeback_rate:           0.10,
+  // Punish (sum = 1.00) — D/O and OPK are primary efficiency metrics
+  damage_per_opening:      0.30,
+  openings_per_kill:       0.30,
+  edgeguard_success_rate:  0.15,
+  avg_kill_percent:        0.15,
+  tech_chase_rate:         0.05,
+  hit_advantage_rate:      0.05,
+  // Defense (sum = 1.00)
+  recovery_success_rate:   0.35,
+  avg_death_percent:       0.30,
+  avg_stock_duration:      0.20,
+  respawn_defense_rate:    0.15,
+};
 
-/** Overall score weights per category.
- *  Execution is 0 — all its stats are display-only; the weighted average
- *  auto-excludes null-scored categories so this is effectively 37/37/26. */
+/** Overall score weights per category. */
 const CATEGORY_WEIGHTS: Record<CategoryKey, number> = {
-  punish:    0.35,
-  neutral:   0.35,
-  defense:   0.25,
-  execution: 0,
+  neutral: 0.40,
+  punish:  0.40,
+  defense: 0.20,
 };
 
 /** Category definitions — stats listed in display order within each category.
- *  Exported so the display component can iterate the same mapping. */
+ *  Exported so the display component can iterate the same mapping.
+ *  Execution stats (l_cancel_ratio, inputs_per_minute, wavedash_miss_rate) are
+ *  in DISPLAY_ONLY_STATS and are not a scored category. */
 export const CATEGORY_DEFS: Record<CategoryKey, { label: string; stats: (keyof SetGrade["breakdown"])[] }> = {
-  neutral:   { label: "Neutral",   stats: ["neutral_win_ratio", "opening_conversion_rate", "stage_control_ratio", "lead_maintenance_rate", "comeback_rate"]   },
-  punish:    { label: "Punish",    stats: ["damage_per_opening", "openings_per_kill", "avg_kill_percent", "edgeguard_success_rate", "tech_chase_rate", "hit_advantage_rate"] },
-  defense:   { label: "Defense",   stats: ["avg_death_percent", "recovery_success_rate", "avg_stock_duration", "respawn_defense_rate"]                         },
-  execution: { label: "Execution", stats: ["l_cancel_ratio", "inputs_per_minute", "wavedash_miss_rate"]                                                        },
+  neutral: { label: "Neutral", stats: ["neutral_win_ratio", "opening_conversion_rate", "stage_control_ratio", "lead_maintenance_rate", "comeback_rate"] },
+  punish:  { label: "Punish",  stats: ["damage_per_opening", "openings_per_kill", "avg_kill_percent", "edgeguard_success_rate", "tech_chase_rate", "hit_advantage_rate"] },
+  defense: { label: "Defense", stats: ["avg_death_percent", "recovery_success_rate", "avg_stock_duration", "respawn_defense_rate"] },
 };
 
 const STAT_LABELS: Record<string, string> = {

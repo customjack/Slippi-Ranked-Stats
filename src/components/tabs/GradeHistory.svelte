@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import {
     isPremium, connectCode, sets,
     gradeHistory, gradeHistoryBusy, gradeHistoryProgress,
+    discordToken, discordUsername,
     type GradeHistoryEntry, type LiveGameStats,
   } from "../../lib/store";
+  import { startDiscordAuth, verifyPatronRole } from "../../lib/discord";
   import { open as openUrl } from "@tauri-apps/plugin-shell";
   import { CHARACTERS, parseSlpFile } from "../../lib/parser";
   import { gradeSet, scoreToGrade, type GradeLetter } from "../../lib/grading";
@@ -19,10 +20,9 @@
       letter:     row.overall_letter as GradeLetter,
       score:      row.overall_score,
       categories: {
-        neutral:   { label: "Neutral",   letter: row.neutral_letter as GradeLetter | null,   score: row.neutral_score },
-        punish:    { label: "Punish",    letter: row.punish_letter as GradeLetter | null,     score: row.punish_score },
-        defense:   { label: "Defense",   letter: row.defense_letter as GradeLetter | null,    score: row.defense_score },
-        execution: { label: "Execution", letter: row.execution_letter as GradeLetter | null,  score: row.execution_score },
+        neutral: { label: "Neutral", letter: row.neutral_letter as GradeLetter | null, score: row.neutral_score },
+        punish:  { label: "Punish",  letter: row.punish_letter as GradeLetter | null,  score: row.punish_score },
+        defense: { label: "Defense", letter: row.defense_letter as GradeLetter | null, score: row.defense_score },
       },
       breakdown:      JSON.parse(row.breakdown_json),
       playerChar:     row.player_char,
@@ -48,25 +48,40 @@
     };
   }
 
-  onMount(async () => {
+  $effect(() => {
     const code = $connectCode;
+    gradeHistory.set([]);
     if (!code) return;
-    try {
-      const db = await getDb(code);
-      const rows = await getAllSetGrades(db);
-      if (rows.length > 0) {
-        gradeHistory.set(rows.map(rowToEntry));
-      }
-    } catch { /* DB not ready yet — will populate on first grade */ }
+    (async () => {
+      try {
+        const db = await getDb(code);
+        const rows = await getAllSetGrades(db);
+        if (rows.length > 0) gradeHistory.set(rows.map(rowToEntry));
+      } catch { /* DB not ready yet — will populate on first grade */ }
+    })();
   });
+
+  let isConnecting  = $state(false);
+  let isRechecking  = $state(false);
+
+  async function handleConnect() {
+    isConnecting = true;
+    try { await startDiscordAuth(); } finally { isConnecting = false; }
+  }
+
+  async function handleRecheck() {
+    isRechecking = true;
+    await verifyPatronRole();
+    isRechecking = false;
+  }
 
   const GRADE_COLORS: Record<string, string> = {
     S: "#FFD700",
-    A: "#00e676",
-    B: "#448aff",
-    C: "#aaaaaa",
-    D: "#ff9800",
-    F: "#ff1744",
+    A: "#00C853",
+    B: "#00B0FF",
+    C: "#FFB300",
+    D: "#FF6D00",
+    F: "#FF1744",
   };
 
   function gc(letter: string | null): string {
@@ -218,8 +233,8 @@
                 punish_letter:    g.categories.punish.letter,
                 defense_score:    g.categories.defense.score,
                 defense_letter:   g.categories.defense.letter,
-                execution_score:  g.categories.execution.score,
-                execution_letter: g.categories.execution.letter,
+                execution_score:  null,
+                execution_letter: null,
                 breakdown_json:   JSON.stringify(g.breakdown),
               });
             } catch { /* don't fail the UI on a DB write error */ }
@@ -266,49 +281,123 @@
 </script>
 
 {#if !$isPremium}
-  <!-- Free-tier upsell banner (non-blocking) -->
-  <button
-    type="button"
-    onclick={() => openUrl("https://www.patreon.com/joeydonuts")}
-    style="
-      width: 100%; margin-bottom: 16px; padding: 10px 14px;
-      background: linear-gradient(135deg, #7c3aed22, #FF424D22);
-      border: 1px solid #7c3aed55; border-radius: 8px;
-      color: var(--text); font-family: inherit; cursor: pointer; text-align: left;
-      display: flex; align-items: center; gap: 10px;
-    "
-  >
-    <span style="font-size: 18px">🔒</span>
-    <div style="flex: 1">
-      <div style="font-size: 12px; font-weight: 700; margin-bottom: 2px">
-        Unlock the full breakdown
-      </div>
-      <div style="font-size: 11px; color: var(--muted); line-height: 1.4">
-        Free: overall grade + strongest/weakest category. Patreon: per-category scores, every stat, matchup baselines.
+  <div class="card" style="margin-bottom: 16px; border-color: #7c3aed44">
+    <div style="display: flex; align-items: flex-start; gap: 14px">
+      <span style="font-size: 26px; line-height: 1; margin-top: 2px">🔒</span>
+      <div style="flex: 1">
+        <div style="font-size: 14px; font-weight: 700; margin-bottom: 5px">Unlock the full grade breakdown</div>
+        <div style="font-size: 12px; color: var(--muted); line-height: 1.6; margin-bottom: 14px">
+          You're seeing the overall letter and weakest category. Premium adds per-category scores,
+          the full 14-stat breakdown, and matchup-specific baselines.
+        </div>
+
+        {#if !$discordToken}
+          <!-- Step 1 + 2 side by side -->
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap">
+            <div style="display: flex; align-items: center; gap: 8px">
+              <div style="
+                width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+                background: #FF424D; color: #fff;
+                font-size: 11px; font-weight: 800;
+                display: flex; align-items: center; justify-content: center;
+              ">1</div>
+              <button
+                type="button"
+                onclick={() => openUrl("https://www.patreon.com/joeydonuts")}
+                style="
+                  display: flex; align-items: center; gap: 7px;
+                  padding: 8px 14px; background: #FF424D; color: #fff;
+                  border: none; border-radius: 6px;
+                  font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
+                "
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="white"><path d="M14.82 2.41C11.25 2.41 8.35 5.31 8.35 8.88c0 3.56 2.9 6.46 6.47 6.46 3.56 0 6.46-2.9 6.46-6.46 0-3.57-2.9-6.47-6.46-6.47zM3.19 21.59h2.52V2.41H3.19v19.18z"/></svg>
+                Support on Patreon
+              </button>
+            </div>
+
+            <div style="font-size: 12px; color: var(--muted)">then</div>
+
+            <div style="display: flex; align-items: center; gap: 8px">
+              <div style="
+                width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+                background: #5865F2; color: #fff;
+                font-size: 11px; font-weight: 800;
+                display: flex; align-items: center; justify-content: center;
+              ">2</div>
+              <button
+                type="button"
+                onclick={handleConnect}
+                disabled={isConnecting}
+                style="
+                  display: flex; align-items: center; gap: 7px;
+                  padding: 8px 14px; background: var(--card); color: var(--text);
+                  border: 1px solid var(--border); border-radius: 6px;
+                  font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+                "
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
+                {isConnecting ? "Opening Discord…" : "Connect Discord"}
+              </button>
+            </div>
+          </div>
+          <div style="font-size: 11px; color: var(--muted); margin-top: 8px">
+            Any Patreon tier unlocks access.
+            <button
+              type="button"
+              onclick={() => openUrl("https://support.patreon.com/hc/en-us/articles/212052266-Getting-Discord-access")}
+              style="background: none; border: none; padding: 0; color: var(--muted); font-size: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; font-family: inherit;"
+            >How do I link Patreon to Discord?</button>
+          </div>
+
+        {:else}
+          <!-- Discord connected — not yet a patron or role not synced -->
+          <div style="
+            background: var(--bg); border: 1px solid #e74c3c44;
+            border-radius: 6px; padding: 10px 14px; margin-bottom: 12px;
+            font-size: 12px; color: var(--muted); line-height: 1.5;
+          ">
+            <span style="color: #e74c3c; font-weight: 600">{$discordUsername ?? "Your account"}</span>
+            {" "}isn't showing a patron role. Just signed up? Roles can take a few minutes to sync after subscribing.
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap">
+            <button
+              type="button"
+              onclick={() => openUrl("https://www.patreon.com/joeydonuts")}
+              style="
+                display: flex; align-items: center; gap: 7px;
+                padding: 8px 14px; background: #FF424D; color: #fff;
+                border: none; border-radius: 6px;
+                font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
+              "
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="white"><path d="M14.82 2.41C11.25 2.41 8.35 5.31 8.35 8.88c0 3.56 2.9 6.46 6.47 6.46 3.56 0 6.46-2.9 6.46-6.46 0-3.57-2.9-6.47-6.46-6.47zM3.19 21.59h2.52V2.41H3.19v19.18z"/></svg>
+              Support on Patreon
+            </button>
+            <button
+              type="button"
+              onclick={handleRecheck}
+              disabled={isRechecking}
+              style="
+                padding: 8px 14px; background: var(--card); color: var(--muted);
+                border: 1px solid var(--border); border-radius: 6px;
+                font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+              "
+            >{isRechecking ? "Checking…" : "Re-check Discord role"}</button>
+          </div>
+        {/if}
       </div>
     </div>
-    <div style="font-size: 11px; font-weight: 700; color: #7c3aed; white-space: nowrap">
-      Upgrade →
-    </div>
-  </button>
+  </div>
 {/if}
 
   <!-- Header -->
   <div class="card" style="margin-bottom: 16px">
-    <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+    <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap">
       <div>
-        <div class="section-title" style="margin-bottom: 3px">Ranked Grades</div>
-        <div style="font-size: 11px; color: var(--muted)">
-          Scores each set across Neutral, Punish, Defense, and Execution against community baselines. A directional read, not a verdict.
-          <button
-            type="button"
-            onclick={() => openUrl("https://github.com/Joey-Farah/Slippi-Ranked-Stats/blob/main/docs/grading_methodology.md")}
-            style="
-              background: none; border: none; padding: 0; margin-left: 2px;
-              color: #7c3aed; font-family: inherit; font-size: inherit;
-              cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
-            "
-          >How is this calculated?</button>
+        <div class="section-title" style="margin-bottom: 4px">Grading</div>
+        <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px">
+          Each set scored across Neutral, Punish, and Defense against community baselines.
           {#if $gradeHistory.length > 0 && !$gradeHistoryBusy}
             <span style="color: var(--text)">{$gradeHistory.filter((r) => r.grade !== null).length} of {completedSets.length} sets graded.</span>
             {#if ungradedSets.length === 0}
@@ -316,6 +405,18 @@
             {/if}
           {/if}
         </div>
+        <button
+          type="button"
+          onclick={() => openUrl("https://github.com/Joey-Farah/Slippi-Ranked-Stats/blob/main/docs/grading_methodology.md")}
+          style="
+            display: inline-flex; align-items: center; gap: 5px;
+            background: #7c3aed18; border: 1px solid #7c3aed55; border-radius: 6px;
+            padding: 5px 10px; font-size: 11px; font-weight: 600;
+            color: #a78bfa; font-family: inherit; cursor: pointer;
+          "
+        >
+          <span style="font-size: 13px">📖</span> Grading Methodology
+        </button>
       </div>
       <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0">
         <button
@@ -323,7 +424,7 @@
           disabled={$gradeHistoryBusy || ungradedSets.length === 0}
           onclick={() => gradeAllSets(false)}
           style="
-            padding: 9px 18px; font-size: 12px; font-weight: 700;
+            padding: 10px 20px; font-size: 13px; font-weight: 700;
             background: #7c3aed; color: #fff; border: none; border-radius: 6px;
             cursor: {$gradeHistoryBusy || ungradedSets.length === 0 ? 'default' : 'pointer'};
             opacity: {$gradeHistoryBusy || ungradedSets.length === 0 ? 0.5 : 1};
@@ -348,7 +449,7 @@
                 onclick={regradeStale}
                 style="
                   background: none; border: none; padding: 0;
-                  font-size: 10px; color: #ff9800; cursor: pointer;
+                  font-size: 11px; color: #ff9800; cursor: pointer;
                   text-decoration: underline; text-underline-offset: 2px;
                 "
               >Regrade stale ({staleCount})</button>
@@ -358,7 +459,7 @@
               onclick={() => gradeAllSets(true)}
               style="
                 background: none; border: none; padding: 0;
-                font-size: 10px; color: var(--muted); cursor: pointer;
+                font-size: 11px; color: var(--muted); cursor: pointer;
                 text-decoration: underline; text-underline-offset: 2px;
               "
             >Regrade all</button>
@@ -386,16 +487,16 @@
       {@const graded = sortedHistory.filter((r) => r.grade !== null)}
       {@const avgScore = graded.length > 0 ? graded.reduce((a, r) => a + r.grade!.score, 0) / graded.length : null}
       <div class="card" style="margin-bottom: 16px">
-        <div style="display: flex; gap: 16px; flex-wrap: wrap; align-items: center">
+        <div style="display: flex; gap: 24px; flex-wrap: wrap; align-items: center">
           {#each ["S","A","B","C","D","F"] as letter}
             {@const count = graded.filter((r) => r.grade?.letter === letter).length}
-            <div style="text-align: center; min-width: 32px">
+            <div style="text-align: center; min-width: 40px">
               <div style="
-                font-size: 18px; font-weight: 800; color: {gc(letter)};
+                font-size: 24px; font-weight: 800; color: {gc(letter)};
                 {letter === 'S' ? `text-shadow: 0 0 8px ${gc(letter)}aa;` : ''}
               ">{letter}</div>
-              <div style="font-size: 14px; font-weight: 600">{count}</div>
-              <div style="font-size: 10px; color: var(--muted)">
+              <div style="font-size: 18px; font-weight: 600">{count}</div>
+              <div style="font-size: 12px; color: var(--muted)">
                 {graded.length > 0 ? Math.round((count / graded.length) * 100) + "%" : "—"}
               </div>
             </div>
@@ -403,16 +504,16 @@
           {#if avgScore !== null}
             {@const avgLetter = scoreToGrade(avgScore)}
             <div style="margin-left: auto; text-align: right">
-              <div style="font-size: 10px; color: var(--muted); margin-bottom: 4px">Overall average</div>
+              <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px">Overall average</div>
               <div style="display: flex; align-items: baseline; gap: 8px; justify-content: flex-end">
                 <div style="
-                  font-size: 26px; font-weight: 800; line-height: 1;
+                  font-size: 32px; font-weight: 800; line-height: 1;
                   color: {gc(avgLetter)};
                   {avgLetter === 'S' ? `text-shadow: 0 0 10px ${gc(avgLetter)}aa;` : ''}
                 ">{avgLetter}</div>
-                <div style="font-size: 20px; font-weight: 700; color: var(--muted)">{avgScore.toFixed(1)}</div>
+                <div style="font-size: 24px; font-weight: 700; color: var(--muted)">{avgScore.toFixed(1)}</div>
               </div>
-              <div style="font-size: 10px; color: var(--muted); margin-top: 3px">{graded.length} sets graded</div>
+              <div style="font-size: 12px; color: var(--muted); margin-top: 3px">{graded.length} sets graded</div>
             </div>
           {/if}
         </div>
@@ -421,101 +522,135 @@
 
     <!-- Filter + sort controls -->
     {#if !$gradeHistoryBusy}
-      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px">
-        <!-- Grade letter filter pills -->
-        <div style="display: flex; gap: 4px; align-items: center">
-          <button
-            type="button"
-            onclick={() => filterLetter = null}
-            style="
-              padding: 3px 8px; font-size: 10px; font-weight: 700; border-radius: 4px;
-              border: 1px solid {filterLetter === null ? '#7c3aed' : 'var(--border)'};
-              background: {filterLetter === null ? '#7c3aed22' : 'transparent'};
-              color: {filterLetter === null ? '#7c3aed' : 'var(--muted)'};
-              cursor: pointer;
-            "
-          >ALL</button>
-          {#each ["S","A","B","C","D","F"] as letter}
+      {@const anyFilterActive = filterLetter !== null || filterResult !== "all" || filterPlayerChar !== null || filterOppChar !== null}
+      <div class="card" style="padding: 12px 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap">
+
+        <!-- Grade filter group -->
+        <div>
+          <div style="font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: 0.07em; margin-bottom: 6px">GRADE</div>
+          <div style="display: flex; gap: 3px">
             <button
               type="button"
-              onclick={() => filterLetter = filterLetter === letter ? null : letter}
+              onclick={() => filterLetter = null}
               style="
-                padding: 3px 8px; font-size: 10px; font-weight: 800; border-radius: 4px;
-                border: 1px solid {filterLetter === letter ? gc(letter) : 'var(--border)'};
-                background: {filterLetter === letter ? gc(letter) + '22' : 'transparent'};
-                color: {filterLetter === letter ? gc(letter) : 'var(--muted)'};
+                padding: 4px 10px; font-size: 12px; font-weight: 700; border-radius: 4px;
+                border: 1px solid {filterLetter === null ? '#7c3aed' : 'var(--border)'};
+                background: {filterLetter === null ? '#7c3aed22' : 'transparent'};
+                color: {filterLetter === null ? '#7c3aed' : 'var(--muted)'};
                 cursor: pointer;
               "
-            >{letter}</button>
-          {/each}
+            >ALL</button>
+            {#each ["S","A","B","C","D","F"] as letter}
+              <button
+                type="button"
+                onclick={() => filterLetter = filterLetter === letter ? null : letter}
+                style="
+                  padding: 4px 10px; font-size: 12px; font-weight: 800; border-radius: 4px;
+                  border: 1px solid {filterLetter === letter ? gc(letter) : 'var(--border)'};
+                  background: {filterLetter === letter ? gc(letter) + '22' : 'transparent'};
+                  color: {filterLetter === letter ? gc(letter) : 'var(--muted)'};
+                  cursor: pointer;
+                "
+              >{letter}</button>
+            {/each}
+          </div>
         </div>
 
-        <!-- Result filter -->
-        <div style="display: flex; gap: 2px; align-items: center; border: 1px solid var(--border); border-radius: 4px; overflow: hidden">
-          {#each [["all","All"],["win","W"],["loss","L"]] as [val, label]}
+        <div style="width: 1px; height: 36px; background: var(--border); flex-shrink: 0"></div>
+
+        <!-- Result filter group -->
+        <div>
+          <div style="font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: 0.07em; margin-bottom: 6px">RESULT</div>
+          <div style="display: flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden">
+            {#each [["all","All"],["win","W"],["loss","L"]] as [val, label]}
+              <button
+                type="button"
+                onclick={() => filterResult = val as "all" | "win" | "loss"}
+                style="
+                  padding: 4px 12px; font-size: 12px; font-weight: 700; border: none;
+                  background: {filterResult === val ? (val === 'win' ? '#2ecc7133' : val === 'loss' ? '#e74c3c33' : '#7c3aed22') : 'transparent'};
+                  color: {filterResult === val ? (val === 'win' ? '#2ecc71' : val === 'loss' ? '#e74c3c' : '#7c3aed') : 'var(--muted)'};
+                  cursor: pointer;
+                "
+              >{label}</button>
+            {/each}
+          </div>
+        </div>
+
+        <!-- Character filters (only shown when relevant) -->
+        {#if uniquePlayerChars.length > 1 || uniqueOppChars.length > 0}
+          <div style="width: 1px; height: 36px; background: var(--border); flex-shrink: 0"></div>
+          <div>
+            <div style="font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: 0.07em; margin-bottom: 6px">CHARACTER</div>
+            <div style="display: flex; gap: 6px">
+              {#if uniquePlayerChars.length > 1}
+                <select
+                  bind:value={filterPlayerChar}
+                  style="
+                    font-size: 12px; font-weight: 600; max-width: 140px;
+                    background: var(--bg); color: {filterPlayerChar ? 'var(--text)' : 'var(--muted)'};
+                    border: 1px solid {filterPlayerChar ? '#7c3aed' : 'var(--border)'}; border-radius: 4px;
+                    padding: 4px 8px; cursor: pointer;
+                  "
+                >
+                  <option value={null}>My Char</option>
+                  {#each uniquePlayerChars as char}
+                    <option value={char}>{char}</option>
+                  {/each}
+                </select>
+              {/if}
+              {#if uniqueOppChars.length > 0}
+                <select
+                  bind:value={filterOppChar}
+                  style="
+                    font-size: 12px; font-weight: 600; max-width: 140px;
+                    background: var(--bg); color: {filterOppChar ? 'var(--text)' : 'var(--muted)'};
+                    border: 1px solid {filterOppChar ? '#7c3aed' : 'var(--border)'}; border-radius: 4px;
+                    padding: 4px 8px; cursor: pointer;
+                  "
+                >
+                  <option value={null}>Opp Char</option>
+                  {#each uniqueOppChars as char}
+                    <option value={char}>{char}</option>
+                  {/each}
+                </select>
+              {/if}
+            </div>
+          </div>
+        {/if}
+
+        <!-- Sort + clear — pushed right -->
+        <div style="margin-left: auto; display: flex; align-items: flex-end; gap: 10px">
+          {#if anyFilterActive}
             <button
               type="button"
-              onclick={() => filterResult = val as "all" | "win" | "loss"}
+              onclick={() => { filterLetter = null; filterResult = "all"; filterPlayerChar = null; filterOppChar = null; }}
               style="
-                padding: 3px 7px; font-size: 10px; font-weight: 700; border: none;
-                background: {filterResult === val ? (val === 'win' ? '#2ecc7133' : val === 'loss' ? '#e74c3c33' : '#7c3aed22') : 'transparent'};
-                color: {filterResult === val ? (val === 'win' ? '#2ecc71' : val === 'loss' ? '#e74c3c' : '#7c3aed') : 'var(--muted)'};
-                cursor: pointer;
+                background: none; border: none; padding: 4px 0; margin-bottom: 1px;
+                font-size: 11px; color: var(--muted); cursor: pointer;
+                text-decoration: underline; text-underline-offset: 2px;
+                font-family: inherit;
               "
-            >{label}</button>
-          {/each}
+            >Clear filters</button>
+          {/if}
+          <div>
+            <div style="font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: 0.07em; margin-bottom: 6px">SORT</div>
+            <select
+              bind:value={sortMode}
+              style="
+                font-size: 12px; font-weight: 600;
+                background: var(--bg); color: var(--muted);
+                border: 1px solid var(--border); border-radius: 4px;
+                padding: 4px 8px; cursor: pointer;
+              "
+            >
+              <option value="date-desc">Date ↓</option>
+              <option value="date-asc">Date ↑</option>
+              <option value="score-desc">Score ↓</option>
+              <option value="score-asc">Score ↑</option>
+            </select>
+          </div>
         </div>
-
-        <!-- Character filters -->
-        {#if uniquePlayerChars.length > 1}
-          <select
-            bind:value={filterPlayerChar}
-            style="
-              font-size: 10px; font-weight: 600;
-              background: var(--card); color: {filterPlayerChar ? 'var(--text)' : 'var(--muted)'};
-              border: 1px solid {filterPlayerChar ? '#7c3aed' : 'var(--border)'}; border-radius: 4px;
-              padding: 3px 6px; cursor: pointer;
-            "
-          >
-            <option value={null}>My Char</option>
-            {#each uniquePlayerChars as char}
-              <option value={char}>{char}</option>
-            {/each}
-          </select>
-        {/if}
-
-        {#if uniqueOppChars.length > 0}
-          <select
-            bind:value={filterOppChar}
-            style="
-              font-size: 10px; font-weight: 600;
-              background: var(--card); color: {filterOppChar ? 'var(--text)' : 'var(--muted)'};
-              border: 1px solid {filterOppChar ? '#7c3aed' : 'var(--border)'}; border-radius: 4px;
-              padding: 3px 6px; cursor: pointer;
-            "
-          >
-            <option value={null}>Opp Char</option>
-            {#each uniqueOppChars as char}
-              <option value={char}>{char}</option>
-            {/each}
-          </select>
-        {/if}
-
-        <!-- Sort selector -->
-        <select
-          bind:value={sortMode}
-          style="
-            margin-left: auto; font-size: 10px; font-weight: 600;
-            background: var(--card); color: var(--muted);
-            border: 1px solid var(--border); border-radius: 4px;
-            padding: 3px 6px; cursor: pointer;
-          "
-        >
-          <option value="date-desc">Date ↓</option>
-          <option value="date-asc">Date ↑</option>
-          <option value="score-desc">Score ↓</option>
-          <option value="score-asc">Score ↑</option>
-        </select>
       </div>
     {/if}
 
@@ -524,9 +659,9 @@
 
       <!-- Column headers -->
       <div style="
-        display: grid; grid-template-columns: 46px 1fr 80px 64px 48px 36px 16px;
-        gap: 8px; padding: 8px 14px;
-        font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: 0.06em;
+        display: grid; grid-template-columns: 55px 140px 1fr 80px 56px 48px 20px;
+        gap: 8px; padding: 10px 16px;
+        font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: 0.06em;
         border-bottom: 1px solid var(--border);
       ">
         <div>DATE</div>
@@ -551,36 +686,36 @@
             onclick={() => { selectedMatchId = selectedMatchId === r.matchId ? null : r.matchId; }}
             style="
               width: 100%; text-align: left; background: none; border: none;
-              display: grid; grid-template-columns: 46px 1fr 80px 64px 48px 36px 16px;
+              display: grid; grid-template-columns: 55px 140px 1fr 80px 56px 48px 20px;
               align-items: center; gap: 8px;
-              padding: 9px 14px;
+              padding: 12px 16px;
               border-left: 3px solid {isSelected ? gc(letter) : 'transparent'};
               background: {isSelected ? `${gc(letter)}0d` : 'transparent'};
               cursor: pointer;
               font-family: inherit; color: var(--text);
             "
           >
-            <div style="font-size: 11px; color: var(--muted)">{r.date}</div>
-            <div style="font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
+            <div style="font-size: 12px; color: var(--muted)">{r.date}</div>
+            <div style="font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
               {r.opponentCode}
             </div>
-            <div style="font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
+            <div style="font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
               {r.opponentChar}
             </div>
-            <div style="font-size: 11px; color: {isWin ? '#2ecc71' : '#e74c3c'}; font-weight: 600">
+            <div style="font-size: 13px; color: {isWin ? '#2ecc71' : '#e74c3c'}; font-weight: 600">
               {isWin ? "W" : "L"} {r.wins}–{r.losses}
             </div>
-            <div style="font-size: 11px; color: {isStale ? '#ff9800' : 'var(--muted)'}; text-align: right" title={isStale ? "Stale — baselines updated" : ""}>
+            <div style="font-size: 13px; color: {isStale ? '#ff9800' : 'var(--muted)'}; text-align: right" title={isStale ? "Stale — baselines updated" : ""}>
               {r.grade ? r.grade.score.toFixed(0) : "—"}{isStale ? " ⟳" : ""}
             </div>
             <div style="
-              font-size: 15px; font-weight: 800; text-align: center;
+              font-size: 18px; font-weight: 800; text-align: center;
               color: {gc(letter)};
               {letter === 'S' ? `text-shadow: 0 0 8px ${gc('S')}aa;` : ''}
             ">
               {letter ?? (r.error ? "?" : "…")}
             </div>
-            <div style="font-size: 10px; color: var(--muted); text-align: right; transition: transform 0.15s; transform: rotate({isSelected ? 180 : 0}deg)">
+            <div style="font-size: 11px; color: var(--muted); text-align: right; transition: transform 0.15s; transform: rotate({isSelected ? 180 : 0}deg)">
               ▾
             </div>
           </button>

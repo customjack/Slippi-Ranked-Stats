@@ -350,8 +350,8 @@ async function handleRankedGame(
             punish_letter:    grade.categories.punish.letter,
             defense_score:    grade.categories.defense.score,
             defense_letter:   grade.categories.defense.letter,
-            execution_score:  grade.categories.execution.score,
-            execution_letter: grade.categories.execution.letter,
+            execution_score:  null,
+            execution_letter: null,
             breakdown_json:   JSON.stringify(grade.breakdown),
           });
         } catch { /* don't fail live session on DB write error */ }
