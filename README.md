@@ -9,6 +9,12 @@ A desktop app for tracking and analyzing your Slippi Ranked sets. Point it at yo
 ![Version](https://img.shields.io/github/v/release/Joey-Farah/Slippi-Ranked-Stats)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
 
+<p align="center">
+  <img src="docs/screenshots/grades.png" alt="Set grading breakdown" width="48%" />
+  &nbsp;
+  <img src="docs/screenshots/Last Session.png" alt="Live session tracking" width="48%" />
+</p>
+
 ---
 
 ## Features
@@ -64,20 +70,20 @@ Updates are cryptographically signed — the app will only install an update tha
 
 ## Premium
 
-Premium features are available to [Patreon supporters](https://www.patreon.com/joeydonuts):
+Premium features are available to supporters on [Ko-fi](https://ko-fi.com/joeydonuts) or [Patreon](https://www.patreon.com/joeydonuts):
 
 - **Live Session Tracking** — real-time per-game stats, NOW PLAYING card, and rating delta
 - **Full Set Grade Breakdown** — per-category scores, per-stat values and scores, and matchup-specific baselines. (The overall grade + strongest/weakest category are free for everyone.)
 
-After subscribing, join the Discord server (linked on the Patreon page), connect your Patreon account to Discord, then click **Connect Discord** in the app sidebar to verify your role.
+After subscribing, click **Connect Discord** in the app to verify your supporter role.
 
 ---
 
 ## Support
 
-If you get some use out of this, feel free to support the project on Patreon:
+If you get some use out of this, feel free to support the project:
 
-[patreon.com/joeydonuts](https://www.patreon.com/joeydonuts)
+[ko-fi.com/joeydonuts](https://ko-fi.com/joeydonuts) · [patreon.com/joeydonuts](https://www.patreon.com/joeydonuts)
 
 ---
 

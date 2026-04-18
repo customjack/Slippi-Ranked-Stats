@@ -107,8 +107,8 @@ export const DISPLAY_ONLY_STATS = new Set<keyof SetGrade["breakdown"]>([
 const STAT_WEIGHTS: Partial<Record<keyof SetGrade["breakdown"], number>> = {
   // Neutral (sum = 1.00)
   neutral_win_ratio:       0.30,
-  opening_conversion_rate: 0.25,
-  stage_control_ratio:     0.20,
+  opening_conversion_rate: 0.30,
+  stage_control_ratio:     0.15,
   lead_maintenance_rate:   0.15,
   comeback_rate:           0.10,
   // Punish (sum = 1.00) — D/O and OPK are primary efficiency metrics

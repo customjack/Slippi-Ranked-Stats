@@ -40,8 +40,8 @@ Winning the early game exchange and controlling tempo.
 | Stat | Weight | What it measures |
 |------|--------|-----------------|
 | **Neutral Win Rate** | 30% | Out of all neutral exchanges, how often you came out ahead |
-| **Opening Conversion %** | 25% | When you got a hit, how often it turned into meaningful damage |
-| **Stage Control %** | 20% | How often you held the center / offensive position |
+| **Opening Conversion %** | 30% | When you got a hit, how often it turned into meaningful damage |
+| **Stage Control %** | 15% | How often you held the center / offensive position |
 | **Lead Maintenance %** | 15% | When ahead in stocks, how often you stayed ahead |
 | **Comeback Rate** | 10% | How often you recovered from being behind in stocks |
 

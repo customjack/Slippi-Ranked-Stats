@@ -28,7 +28,7 @@ For each stat in a completed set, `percentileScore(value, thresholds, inverted)`
 - **Win bonus**: +5 added to the composite score for a set win (capped at 100). Winning a set reflects adaptability and reads not captured by raw metrics.
 - **Benchmark lookup**: matchup (player × opp) → player char → `_overall`. The display shows which tier was used.
 - **Category weights**: Neutral 40%, Punish 40%, Defense 20%. Execution category removed — its three stats are display-only and not scored.
-- **Per-stat weights**: D/O 30%, OPK 30%, Edgeguard 15%, Kill% 15%, Tech Chase 5%, Hit Advantage 5% (Punish); NWR 30%, OCR 25%, Stage Control 20%, Lead Maintenance 15%, Comeback 10% (Neutral); Recovery 35%, Death% 30%, Stock Duration 20%, Respawn Defense 15% (Defense).
+- **Per-stat weights**: D/O 30%, OPK 30%, Edgeguard 15%, Kill% 15%, Tech Chase 5%, Hit Advantage 5% (Punish); NWR 30%, OCR 30%, Stage Control 15%, Lead Maintenance 15%, Comeback 10% (Neutral); Recovery 35%, Death% 30%, Stock Duration 20%, Respawn Defense 15% (Defense).
 
 **Stats by category (18 total):**
 | Category  | Stats                                                                                                 |
