@@ -6,6 +6,36 @@ Newest first.
 
 ---
 
+## 2026-04-18 — Grading overhaul, UI polish, beta release (v1.4.0-beta.1)
+
+**Machine:** Windows
+
+### Product decisions made
+
+- **Execution category removed from scoring.** L-cancel, IPM, and wavedash miss rate remain in the breakdown display but carry zero weight. The plateau in technical execution at mid-to-high levels makes them poor discriminators.
+- **New category weights: Neutral 40%, Punish 40%, Defense 20%.** Per-stat weights added within each category — D/O and OPK at 30% each within Punish (primary efficiency signal).
+- **Connect code switching bug fixed.** `onMount` only fired once; replaced with `$effect` so grade history correctly reloads when the user switches connect codes.
+- **Beta distribution strategy.** Modified `release.yml` to detect `-beta` tags and create GitHub pre-releases instead of stable releases. `/releases/latest` endpoint excludes pre-releases, so existing users' auto-updater is unaffected. Tag `v1.4.0-beta.1` pushed; build confirmed running.
+- **Next rescan planned post-tester feedback.** Current benchmarks predate the `lastHitBy` kill attribution fix. Effect is small (SDs rare in ranked) but will be corrected in the next rescan before stable release.
+
+### Changes made
+
+- **`src/lib/grading.ts`** — `CategoryKey` removes `"execution"`; `CATEGORY_WEIGHTS` → `{ neutral: 0.40, punish: 0.40, defense: 0.20 }`; `STAT_WEIGHTS` populated with per-stat weights for all 14 scored stats; `CATEGORY_DEFS` execution entry removed.
+- **`src/lib/watcher.ts`** — execution score/letter DB writes now write `null`.
+- **`src/components/SetGradeDisplay.svelte`** — execution removed from `CATEGORY_ORDER`; overall badge scaled to 80px/38px; category headers 14px; stat rows use `1fr 160px 48px 28px` grid (label gets 1fr, bar capped at 160px); stat name 15px/600 weight, value 13px; bar height 6px; new grade colors (S=gold, A=green, B=sky blue, C=amber, D=orange, F=red).
+- **`src/components/tabs/GradeHistory.svelte`** — execution removed from `rowToEntry` and DB writes; `onMount` → `$effect` for connect-code reactivity; non-premium banner replaced with full Patreon→Discord step flow (adapts to Discord connection state); filter bar redesigned as labeled card with GRADE/RESULT/CHARACTER/SORT groups and Clear filters button; distribution summary and table rows scaled up; tab section title updated to "Grading".
+- **`src/App.svelte`** — tab renamed `"📝 Grading"`, Live Session moved to last position (index 5), PRO badge removed.
+- **`docs/grading_methodology.md`** — fully rewritten for 3-category structure, per-stat weight tables, note that methodology will evolve.
+- **`.github/workflows/release.yml`** — detects `-beta` in tag name and passes `--prerelease` to `gh release create`.
+- **`src-tauri/tauri.conf.json`**, **`package.json`** — version bumped to `1.4.0`.
+- **`release-notes.md`** — updated for v1.4.0 beta.
+
+### Commits this session
+- `ebb73c1` — Overhaul grading UI and weight system for tester release
+- `9800853` — Bump version to 1.4.0; add beta pre-release support to release workflow
+
+---
+
 ## 2026-04-17 — Free/premium split for grading + user-facing methodology
 
 **Machine:** Mac (primary)

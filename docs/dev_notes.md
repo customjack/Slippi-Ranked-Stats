@@ -82,14 +82,14 @@ All fixes are committed. Live parser (`slp_parser.ts`) and Python pipeline (`par
 
 OCR accuracy after both fixes: **10/12 games exact, avg gap 0.7%, max gap 5.3%** vs slippi-js `successfulConversions.ratio`.
 
-### Pending: Kill%/OPK/Death% benchmark rescan
+### Pending: full benchmark rescan (next scheduled run)
 
-Current benchmarks used old kill definition (`4 - finalStocks`, includes SDs). Live parser now uses `lastHitBy` attribution. Difference is small (SDs are rare in ranked) but for full parity:
+Current benchmarks used the old kill definition (`4 - finalStocks`, includes SDs). Live parser now uses `lastHitBy` attribution. OCR is already scored (no longer in `DISPLAY_ONLY_STATS`). Steps when ready to rescan:
 
 1. Run full rescan: `python3 scripts/parse_hf_replays.py --character ALL --batch-size 500 --dl-workers 8` (~6.5 hours)
 2. Run `python3 scripts/regen_benchmarks.py`
-3. Remove `"opening_conversion_rate"` from `DISPLAY_ONLY_STATS` in `src/lib/grading.ts`
-4. Commit and regrade all sets (stale baseline version will trigger the orange indicator)
+3. Commit updated `scripts/grade_baselines.json` and `src/lib/grade-benchmarks.ts`
+4. Push — stale indicator in-app triggers regrade for all users on next open
 
 ---
 
