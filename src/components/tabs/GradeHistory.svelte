@@ -315,7 +315,8 @@
                   font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
                 "
               >
-                ☕ Support on Ko-fi
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 0 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8z"/></svg>
+                Support on Ko-fi
               </button>
               <span style="
                 font-size: 10px; font-weight: 700; letter-spacing: 0.05em;
@@ -332,12 +333,12 @@
                 onclick={() => openUrl(PATREON_URL)}
                 style="
                   display: flex; align-items: center; gap: 7px;
-                  padding: 8px 14px; background: var(--card); color: var(--muted);
-                  border: 1px solid var(--border); border-radius: 6px;
-                  font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+                  padding: 8px 14px; background: #FF424D; color: #fff;
+                  border: none; border-radius: 6px;
+                  font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
                 "
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M14.82 2.41C11.25 2.41 8.35 5.31 8.35 8.88c0 3.56 2.9 6.46 6.47 6.46 3.56 0 6.46-2.9 6.46-6.46 0-3.57-2.9-6.47-6.46-6.47zM3.19 21.59h2.52V2.41H3.19v19.18z"/></svg>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="white"><path d="M14.82 2.41C11.25 2.41 8.35 5.31 8.35 8.88c0 3.56 2.9 6.46 6.47 6.46 3.56 0 6.46-2.9 6.46-6.46 0-3.57-2.9-6.47-6.46-6.47zM3.19 21.59h2.52V2.41H3.19v19.18z"/></svg>
                 Patreon
               </button>
             </div>
@@ -388,7 +389,10 @@
                 border: none; border-radius: 6px;
                 font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
               "
-            >☕ Ko-fi</button>
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 8h1a4 4 0 0 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8z"/></svg>
+              Ko-fi
+            </button>
             <button
               type="button"
               onclick={() => openUrl(PATREON_URL)}
