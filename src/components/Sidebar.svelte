@@ -224,7 +224,7 @@
       <!-- Patron confirmed -->
       <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:#2ecc71; font-weight:600; margin-bottom:8px">
         <span>✓</span>
-        <span>{$discordUsername ?? "Connected"} — Patron</span>
+        <span>{$discordUsername ?? "Connected"} — Premium</span>
       </div>
       <div style="display:flex; gap:6px">
         {#if isVerifying}
