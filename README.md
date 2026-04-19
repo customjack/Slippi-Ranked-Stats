@@ -26,7 +26,7 @@ A desktop app for tracking and analyzing your Slippi Ranked sets. Point it at yo
 - **All-time stats** — overall win rate, comeback rate, deciding game win %, and more
 - **Rating history** — track your rating over time with a set-by-set breakdown
 - **Live session tracking** — monitor your current session's stats, NOW PLAYING card, and rating delta in real time (Premium)
-- **Set grading** — every completed set scored across Neutral, Punish, Defense, and Execution against community baselines. Overall letter + strongest/weakest category are free; the full per-stat breakdown is Premium. See [how grading works](docs/grading_methodology.md).
+- **Set grading** — every completed set scored across Neutral, Punish, and Defense against community baselines. Overall letter + strongest/weakest category are free; the full per-stat breakdown is Premium. See [how grading works](docs/grading_methodology.md).
 - **Auto-updates** — notified in-app when a new version is available; installs in one click, no manual download needed
 
 ---

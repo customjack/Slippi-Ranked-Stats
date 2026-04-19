@@ -20,14 +20,14 @@ Wired end-to-end, gated behind `$isPremium`. Visible to all premium users in pro
 
 ### How grading works
 
-For each stat, `percentileScore(value, thresholds, inverted)` linearly interpolates between bench percentiles to produce a 0–100 score. Letter grade thresholds: S ≥ 95, A ≥ 90, B ≥ 75, C ≥ 50, D ≥ 25, F < 25.
+For each stat, `percentileScore(value, thresholds, inverted)` linearly interpolates between bench percentiles to produce a 0–100 score. Letter grade thresholds: S ≥ 75, A ≥ 63, B ≥ 52, C ≥ 40, D ≥ 28, F < 28.
 
 **Algorithm details:**
 - `INVERTED_STATS`: `openings_per_kill`, `avg_kill_percent`, `wavedash_miss_rate` (lower = better)
 - `avg_kill_percent` and `avg_death_percent` skipped when `baselineSource === "overall"` (symmetric pooling makes scores misleading)
 - **Win bonus**: +5 to composite score for a set win (capped at 100)
 - **Benchmark lookup**: matchup (player × opp) → player char → `_overall`
-- **Category weights**: Neutral 35%, Punish 35%, Defense 25%, Execution 5% (execution stats are display-only, not scored)
+- **Category weights**: Neutral 40%, Punish 40%, Defense 20% (execution stats are display-only, not scored — no category weight)
 - **Per-stat weights (Neutral)**: NWR 30%, OCR 30%, Stage Control 15%, Lead Maintenance 15%, Comeback 10%
 - **Per-stat weights (Punish)**: D/O 30%, OPK 30%, Edgeguard 15%, Kill% 15%, Tech Chase 5%, Hit Advantage 5%
 - **Per-stat weights (Defense)**: Recovery 35%, Death% 30%, Stock Duration 20%, Respawn Defense 15%

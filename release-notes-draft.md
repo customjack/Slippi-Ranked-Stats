@@ -2,10 +2,10 @@
 
 ### Set Grading — new feature
 
-Every completed ranked set now gets a letter grade (**S – F**) based on how your performance compares against community baselines built from **221,942 replays across all 25 characters**.
+Every completed ranked set now gets a letter grade (**S – F**) based on how your performance compares against community baselines built from **177,538 replays across 26 characters**.
 
-- **Four categories** scored per set: Neutral, Punish, Defense, Execution
-- **17 stats** — neutral win rate, damage per opening, kill/death percent, edgeguard success, tech chase success, l-cancel accuracy, and more
+- **Three scored categories** per set: Neutral (40%), Punish (40%), Defense (20%). Execution stats (L-cancel, IPM, wavedash miss rate) are shown for reference but not scored.
+- **18 stats** — 15 scored across the three categories (neutral win rate, damage per opening, kill/death percent, edgeguard success, tech chase success, recovery, and more) + 3 execution stats displayed as info
 - **Matchup-aware** — baselines tier from matchup-specific → character-specific → overall, so your grade reflects the actual matchup when data is available
 - **Free for everyone**: overall letter grade + strongest/weakest category for every set
 - **Premium**: full per-category scores, per-stat breakdown with values and individual grades, and matchup-specific baselines

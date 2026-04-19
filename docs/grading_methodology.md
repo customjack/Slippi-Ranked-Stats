@@ -12,7 +12,7 @@ Each set produces:
 
 - An **overall letter** (S–F) and a 0–100 score
 - Three **category grades**: Neutral, Punish, Defense
-- A **per-stat breakdown** — 14 scored stats across the three categories (Premium)
+- A **per-stat breakdown** — 15 scored stats across the three categories (Premium)
 
 Letters map to score thresholds:
 
@@ -31,7 +31,7 @@ A grade is **not a rating**. It's not comparing you against the global ladder �
 
 ## What we measure
 
-We score 14 stats across three categories, each with its own internal weighting.
+We score 15 stats across three categories, each with its own internal weighting.
 
 ### Neutral — 40% of overall
 
@@ -98,7 +98,7 @@ Winning the set adds **+5** to your overall score (capped at 100). Winning refle
 
 ## Baselines — where the numbers come from
 
-Stat percentiles are computed from the **HuggingFace `erickfm/slippi-public-dataset-v3.7` dataset** — a public archive of Slippi replays. We parsed **221,942 ranked replays across all 25 characters** to build the benchmark distributions shipped in the app.
+Stat percentiles are computed from the **HuggingFace `erickfm/slippi-public-dataset-v3.7` dataset** — a public archive of Slippi replays. We parsed **177,538 ranked replays across 26 characters** to build the benchmark distributions shipped in the app.
 
 For each of your sets, we look up baselines in a three-tier fallback:
 

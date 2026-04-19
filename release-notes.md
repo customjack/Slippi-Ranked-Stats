@@ -3,7 +3,7 @@
 ### 📝 Grading tab (new)
 Every completed ranked set now gets a letter grade — **S through F** — based on how your stats compare to community baselines built from 177,000+ Slippi replays (345,000 samples across 26 characters, 183 matchup entries).
 
-- **Three scored categories**: Neutral (35%), Punish (35%), Defense (25%)
+- **Three scored categories**: Neutral (40%), Punish (40%), Defense (20%)
 - **18 individual stats** — 15 scored across the three categories, 3 execution stats shown as info-only (L-cancel, IPM, wavedash miss rate)
 - **Matchup-specific baselines** when enough data exists for your character vs. opponent character, falling back to character-wide or overall baselines
 - **Win bonus**: +5 to your overall score for winning the set
