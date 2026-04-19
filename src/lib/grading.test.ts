@@ -85,10 +85,10 @@ describe("gradeSet", () => {
     expect(Object.keys(grade.breakdown).sort()).toEqual(expectedKeys.sort());
   });
 
-  it("produces all four category grades", () => {
+  it("produces all three category grades", () => {
     const grade = gradeSet([mockGame()], "Fox", "Falco", "win", 2, 0);
     expect(Object.keys(grade.categories).sort()).toEqual(
-      ["defense", "execution", "neutral", "punish"]
+      ["defense", "neutral", "punish"]
     );
   });
 
@@ -189,7 +189,7 @@ describe("category definitions", () => {
     }
   });
 
-  it("has exactly 4 categories", () => {
-    expect(Object.keys(CATEGORY_DEFS)).toHaveLength(4);
+  it("has exactly 3 categories", () => {
+    expect(Object.keys(CATEGORY_DEFS)).toHaveLength(3);
   });
 });

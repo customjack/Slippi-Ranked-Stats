@@ -11,7 +11,7 @@ const LABEL_MAP: Record<string, string> = {
   "utf-8": "utf-8",
 };
 
-function decode(buf: Uint8Array | Buffer | number[], encoding: string): string {
+function decode(buf: Uint8Array | number[], encoding: string): string {
   const label = LABEL_MAP[encoding] ?? encoding;
   try {
     return new TextDecoder(label).decode(

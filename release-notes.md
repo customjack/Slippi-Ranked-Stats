@@ -22,6 +22,4 @@ You can now unlock premium access through Ko-fi in addition to Patreon. Discord 
 
 ---
 
-> **This is a beta build.** Grades and weights may change as we gather feedback. Please report any issues or suggestions.
-
-Download the installer below. Once installed, future stable updates are delivered automatically through the app.
+Download the installer below. Once installed, future updates are delivered automatically through the app.
