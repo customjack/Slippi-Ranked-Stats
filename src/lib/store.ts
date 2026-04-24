@@ -168,6 +168,7 @@ export interface SetResult {
   losses: number;
   result: "win" | "loss";
   hasLras: boolean; // true if any game ended via disconnect/quit
+  sourceCode?: string; // in-memory only: connect code this set's games belong to
 }
 
 export const sets = derived(rankedGames, ($games): SetResult[] => {
@@ -200,6 +201,7 @@ export const sets = derived(rankedGames, ($games): SetResult[] => {
       losses,
       result: wins > losses ? "win" : "loss",
       hasLras,
+      sourceCode: gs[0].sourceCode,
     });
   }
 

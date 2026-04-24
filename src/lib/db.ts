@@ -142,6 +142,7 @@ export interface GameRow {
   duration_frames: number;
   match_id: string;
   filepath: string;
+  sourceCode?: string; // in-memory only: which connect code's DB this game came from
 }
 
 export async function insertGame(

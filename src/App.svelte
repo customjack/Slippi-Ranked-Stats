@@ -1,7 +1,7 @@
 <script lang="ts">
   import Sidebar from "./components/Sidebar.svelte";
   import Header from "./components/Header.svelte";
-  import RecentSession from "./components/tabs/RecentSession.svelte";
+  import RankedSessions from "./components/tabs/RankedSessions.svelte";
   import MatchupStats from "./components/tabs/MatchupStats.svelte";
   import RatingProgression from "./components/tabs/RatingProgression.svelte";
   import LiveRankedSession from "./components/tabs/LiveRankedSession.svelte";
@@ -67,7 +67,8 @@
         const allGameArrays = await Promise.all(
           codes.map(async (c) => {
             const db = await getDb(c);
-            return getGames(db);
+            const rows = await getGames(db);
+            return rows.map((g) => ({ ...g, sourceCode: c }));
           })
         );
         const merged = allGameArrays
@@ -139,7 +140,7 @@
   }
 
   const TABS = [
-    { label: "⚡ Last Session" },
+    { label: "⚡ Ranked Sessions" },
     { label: "🎮 Matchup Stats" },
     { label: "📊 All-Time" },
     { label: "📈 Rating History" },
@@ -188,13 +189,6 @@
   {/if}
 
   <div class="main" style="position:relative">
-    {#if !$sidebarOpen}
-      <button
-        onclick={() => sidebarOpen.set(true)}
-        title="Open sidebar"
-        style="position:absolute; top:6px; left:6px; z-index:10; background:none; border:none; color:var(--muted); cursor:pointer; font-size:28px; padding:4px 8px; line-height:1"
-      >›</button>
-    {/if}
     {#if updateAvailable}
       <div style="background:#f39c12; color:#000; padding:8px 16px; display:flex; align-items:center; gap:12px; font-size:13px; font-weight:600">
         <span>Update available: v{updateVersion}</span>
@@ -226,7 +220,7 @@
 
     <div class="tab-content">
       {#if $activeTab === 0}
-        <RecentSession />
+        <RankedSessions />
       {:else if $activeTab === 1}
         <MatchupStats />
       {:else if $activeTab === 2}

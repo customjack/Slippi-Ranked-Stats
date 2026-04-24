@@ -17,24 +17,37 @@
   import { fetchRatingSnapshot } from "../lib/api";
   import { insertSnapshot, insertSeason, getGames, getSnapshots, getSeasons, clearScannedFiles } from "../lib/db";
 
-  let codeInput = $state($connectCode);
   let dirInput = $state($replayDir);
   let isVerifying = $state(false);
 
-  // Linked codes
-  let linkInput = $state("");
-  let showLinkInput = $state(false);
+  // Unified code list
+  let addInput = $state("");
+  let showAddInput = $state(false);
+  let allCodes = $derived($connectCode ? [$connectCode, ...$linkedCodes] : [...$linkedCodes]);
 
-  function addLinkedCode() {
-    const code = linkInput.trim().toUpperCase();
-    if (!code || code === $connectCode || $linkedCodes.includes(code)) return;
-    linkedCodes.update((prev) => [...prev, code]);
-    linkInput = "";
-    showLinkInput = false;
+  function addCode() {
+    const code = addInput.trim().toUpperCase();
+    if (!code) return;
+    if (!$connectCode) {
+      connectCode.set(code);
+    } else if (code !== $connectCode && !$linkedCodes.includes(code)) {
+      linkedCodes.update((prev) => [...prev, code]);
+    }
+    addInput = "";
+    showAddInput = false;
   }
 
-  function removeLinkedCode(code: string) {
-    linkedCodes.update((prev) => prev.filter((c) => c !== code));
+  function removeCode(code: string) {
+    if (code === $connectCode) {
+      if ($linkedCodes.length > 0) {
+        connectCode.set($linkedCodes[0]);
+        linkedCodes.update((prev) => prev.slice(1));
+      } else {
+        connectCode.set("");
+      }
+    } else {
+      linkedCodes.update((prev) => prev.filter((c) => c !== code));
+    }
   }
 
   async function handleRecheck() {
@@ -52,12 +65,11 @@
   }
 
   async function handleScan() {
-    const code = codeInput.trim().toUpperCase();
+    const code = $connectCode;
     if (!code || !dirInput) {
-      statusMessage.set("Enter a connect code and folder first.");
+      statusMessage.set("Add a connect code and folder first.");
       return;
     }
-    connectCode.set(code);
     replayDir.set(dirInput);
     isScanning.set(true);
     scanProgress.set(null);
@@ -66,7 +78,6 @@
     try {
       const db = await getDb(code);
       const { filesScanned, gamesInserted } = await scanDirectory(dirInput, code, db, (p) => scanProgress.set(p));
-      // Reload games from DB
       const loaded = await getGames(db);
       games.set(loaded);
       statusMessage.set(`Scan complete — ${filesScanned} files, ${gamesInserted} ranked replays found (${loaded.length} total in DB).`);
@@ -79,12 +90,11 @@
   }
 
   async function handleForceRescan() {
-    const code = codeInput.trim().toUpperCase();
+    const code = $connectCode;
     if (!code || !dirInput) {
-      statusMessage.set("Enter a connect code and folder first.");
+      statusMessage.set("Add a connect code and folder first.");
       return;
     }
-    connectCode.set(code);
     replayDir.set(dirInput);
     isScanning.set(true);
     scanProgress.set(null);
@@ -105,12 +115,11 @@
   }
 
   async function handleFetchSnapshot() {
-    const code = codeInput.trim().toUpperCase();
+    const code = $connectCode;
     if (!code) {
-      statusMessage.set("Enter a connect code first.");
+      statusMessage.set("Add a connect code first.");
       return;
     }
-    connectCode.set(code);
     isFetchingSnapshot.set(true);
     statusMessage.set("");
 
@@ -145,57 +154,49 @@
     <button
       onclick={() => sidebarOpen.set(false)}
       title="Collapse sidebar"
-      style="margin-left:auto; background:none; border:none; color:var(--muted); cursor:pointer; font-size:16px; padding:0 2px; line-height:1"
-    >‹</button>
+      style="margin-left:auto; background:none; border:none; color:var(--muted); cursor:pointer; font-size:18px; padding:4px 6px; border-radius:4px; line-height:1; transition:color 0.15s"
+      onmouseenter={(e) => (e.currentTarget as HTMLButtonElement).style.color = 'var(--text)'}
+      onmouseleave={(e) => (e.currentTarget as HTMLButtonElement).style.color = 'var(--muted)'}
+    >☰</button>
   </div>
 
-  <!-- Connect Code -->
+  <!-- Connect Codes -->
   <div class="sidebar-section">
-    <span class="sidebar-label">Connect Code</span>
-    <input
-      type="text"
-      placeholder="ABCD#123"
-      bind:value={codeInput}
-      onchange={() => connectCode.set(codeInput.trim().toUpperCase())}
-    />
+    <span class="sidebar-label">Connect Codes</span>
 
-    <!-- Linked codes -->
-    {#if $linkedCodes.length > 0 || showLinkInput}
-      <div style="margin-top: 6px">
-        <div style="font-size:10px; font-weight:700; color:var(--muted); letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px">
-          Linked Codes
-          <span style="font-weight:400; font-style:italic; text-transform:none; letter-spacing:0"> (stats merged)</span>
-        </div>
-        {#each $linkedCodes as code}
-          <div style="display:flex; align-items:center; gap:6px; margin-bottom:3px">
-            <span style="font-size:12px; font-weight:600; flex:1">{code}</span>
-            <button
-              onclick={() => removeLinkedCode(code)}
-              style="background:none; border:none; color:var(--muted); cursor:pointer; font-size:14px; padding:0 2px; line-height:1"
-              title="Remove"
-            >×</button>
-          </div>
-        {/each}
-        {#if showLinkInput}
-          <div style="display:flex; gap:4px; margin-top:4px">
-            <input
-              type="text"
-              placeholder="CODE#123"
-              bind:value={linkInput}
-              onkeydown={(e) => { if (e.key === "Enter") addLinkedCode(); if (e.key === "Escape") { showLinkInput = false; linkInput = ""; } }}
-              style="flex:1; font-size:12px"
-            />
-            <button class="btn btn-primary" style="font-size:11px; padding:4px 8px" onclick={addLinkedCode}>Add</button>
-          </div>
-        {/if}
+    {#each allCodes as code}
+      <div style="display:flex; align-items:center; gap:6px; padding:4px 0; border-bottom:1px solid var(--border)">
+        <span style="flex:1; font-size:12px; font-weight:600">{code}</span>
+        <button
+          onclick={() => removeCode(code)}
+          title="Remove"
+          style="background:none; border:none; color:var(--muted); cursor:pointer; font-size:15px; padding:0 2px; line-height:1"
+          onmouseenter={(e) => (e.currentTarget as HTMLButtonElement).style.color = '#e74c3c'}
+          onmouseleave={(e) => (e.currentTarget as HTMLButtonElement).style.color = 'var(--muted)'}
+        >×</button>
+      </div>
+    {/each}
+
+    {#if showAddInput}
+      <div style="display:flex; flex-direction:column; gap:4px; margin-top:8px">
+        <input
+          type="text"
+          placeholder="CODE#123"
+          bind:value={addInput}
+          onkeydown={(e) => { if (e.key === "Enter") addCode(); if (e.key === "Escape") { showAddInput = false; addInput = ""; } }}
+          style="font-size:12px; width:100%"
+        />
+        <button class="btn btn-primary" style="font-size:11px; padding:4px 8px; width:100%" onclick={addCode}>
+          {allCodes.length === 0 ? "Set Code" : "Add Code"}
+        </button>
       </div>
     {/if}
 
     <button
-      onclick={() => { showLinkInput = !showLinkInput; linkInput = ""; }}
-      style="margin-top:5px; background:none; border:none; color:var(--muted); cursor:pointer; font-size:11px; padding:0; text-decoration:underline; text-underline-offset:2px; text-align:left"
+      onclick={() => { showAddInput = !showAddInput; addInput = ""; }}
+      style="margin-top:6px; background:none; border:none; color:var(--muted); cursor:pointer; font-size:11px; padding:0; text-decoration:underline; text-underline-offset:2px; text-align:left"
     >
-      {showLinkInput ? "Cancel" : $linkedCodes.length > 0 ? "+ Link another code" : "+ Link another code"}
+      {showAddInput ? "Cancel" : allCodes.length === 0 ? "+ Add your connect code" : "+ Add another code"}
     </button>
   </div>
 

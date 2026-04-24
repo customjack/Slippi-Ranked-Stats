@@ -7,6 +7,23 @@
   const FORM_OPTIONS = [5, 10, 25, 50];
 </script>
 
+{#if !$sidebarOpen}
+  <div style="margin-bottom: 8px">
+    <button
+      onclick={() => sidebarOpen.set(true)}
+      title="Open sidebar"
+      style="
+        background: none; border: none; cursor: pointer;
+        color: var(--muted); padding: 4px 6px; border-radius: 4px;
+        font-size: 18px; line-height: 1; display: flex; align-items: center;
+        transition: color 0.15s;
+      "
+      onmouseenter={(e) => (e.currentTarget as HTMLButtonElement).style.color = 'var(--text)'}
+      onmouseleave={(e) => (e.currentTarget as HTMLButtonElement).style.color = 'var(--muted)'}
+    >☰</button>
+  </div>
+{/if}
+
 <div class="card-grid">
   <!-- Rating (only shown when sidebar is collapsed) -->
   {#if !$sidebarOpen && $snapshots.length > 0}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import {
-    isPremium, connectCode, sets,
+    isPremium, connectCode, effectiveCodes, sets,
     gradeHistory, gradeHistoryBusy, gradeHistoryProgress,
     discordToken, discordUsername,
     type GradeHistoryEntry, type LiveGameStats,
@@ -48,14 +48,24 @@
     };
   }
 
+  let _loadGen = 0;
   $effect(() => {
-    const code = $connectCode;
-    if (!code) { gradeHistory.set([]); return; }
+    const codes = $effectiveCodes;
+    const gen = ++_loadGen;
+    if (codes.length === 0) { gradeHistory.set([]); return; }
     (async () => {
       try {
-        const db = await getDb(code);
-        const rows = await getAllSetGrades(db);
-        gradeHistory.set(rows.map(rowToEntry));
+        const seen = new Map<string, SetGradeRow>();
+        for (const c of codes) {
+          const db = await getDb(c);
+          const rows = await getAllSetGrades(db);
+          for (const row of rows) {
+            const existing = seen.get(row.match_id);
+            if (!existing || row.generated_at > existing.generated_at) seen.set(row.match_id, row);
+          }
+        }
+        if (gen !== _loadGen) return; // stale run — a newer load is in flight
+        gradeHistory.set([...seen.values()].map(rowToEntry));
       } catch { /* DB not ready yet — will populate on first grade */ }
     })();
   });
@@ -133,6 +143,7 @@
 
   async function gradeAllSets(force = false) {
     const code = $connectCode;
+    const codes = $effectiveCodes;
     const toGrade = force ? completedSets : ungradedSets;
     if (!code || toGrade.length === 0) return;
 
@@ -141,8 +152,10 @@
     gradeHistoryBusy.set(true);
     gradeHistoryProgress.set({ current: 0, total: toGrade.length });
 
-    let db: Awaited<ReturnType<typeof getDb>> | null = null;
-    try { db = await getDb(code); } catch { /* DB unavailable — still grade in memory */ }
+    const dbMap = new Map<string, Awaited<ReturnType<typeof getDb>>>();
+    for (const c of codes) {
+      try { dbMap.set(c, await getDb(c)); } catch {}
+    }
 
     for (const target of toGrade) {
       const date = new Date(target.timestamp);
@@ -170,7 +183,7 @@
         for (const g of target.games) {
           if (!g.filepath) continue;
           try {
-            const parsed = await parseSlpFile(g.filepath, code);
+            const parsed = await parseSlpFile(g.filepath, target.sourceCode ?? code);
             for (const p of parsed) {
               liveGames.push({
                 match_id:                p.match_id,
@@ -212,34 +225,39 @@
           entry.grade = gradeSet(liveGames, playerChar, opponentChar, target.result, target.wins, target.losses);
           entry.baselineVersion = BENCHMARKS_VERSION;
 
-          if (db && entry.grade) {
+          const targetCode = target.sourceCode ?? code;
+          const targetDb = dbMap.get(targetCode) ?? null;
+          const primaryDb = dbMap.get(code) ?? null;
+          if (entry.grade) {
             const g = entry.grade;
-            try {
-              await saveSetGrade(db, {
-                match_id:         target.match_id,
-                generated_at:     new Date().toISOString(),
-                set_timestamp:    target.timestamp,
-                baseline_version: BENCHMARKS_VERSION,
-                player_char:      playerChar,
-                opponent_char:    opponentChar,
-                opponent_code:    target.opponent_code,
-                baseline_source:  g.baselineSource,
-                set_result:       g.setResult,
-                wins:             g.wins,
-                losses:           g.losses,
-                overall_letter:   g.letter,
-                overall_score:    g.score,
-                neutral_score:    g.categories.neutral.score,
-                neutral_letter:   g.categories.neutral.letter,
-                punish_score:     g.categories.punish.score,
-                punish_letter:    g.categories.punish.letter,
-                defense_score:    g.categories.defense.score,
-                defense_letter:   g.categories.defense.letter,
-                execution_score:  null,
-                execution_letter: null,
-                breakdown_json:   JSON.stringify(g.breakdown),
-              });
-            } catch { /* don't fail the UI on a DB write error */ }
+            const gradeRow = {
+              match_id:         target.match_id,
+              generated_at:     new Date().toISOString(),
+              set_timestamp:    target.timestamp,
+              baseline_version: BENCHMARKS_VERSION,
+              player_char:      playerChar,
+              opponent_char:    opponentChar,
+              opponent_code:    target.opponent_code,
+              baseline_source:  g.baselineSource,
+              set_result:       g.setResult,
+              wins:             g.wins,
+              losses:           g.losses,
+              overall_letter:   g.letter,
+              overall_score:    g.score,
+              neutral_score:    g.categories.neutral.score,
+              neutral_letter:   g.categories.neutral.letter,
+              punish_score:     g.categories.punish.score,
+              punish_letter:    g.categories.punish.letter,
+              defense_score:    g.categories.defense.score,
+              defense_letter:   g.categories.defense.letter,
+              execution_score:  null,
+              execution_letter: null,
+              breakdown_json:   JSON.stringify(g.breakdown),
+            };
+            // Save to source DB
+            if (targetDb) { try { await saveSetGrade(targetDb, gradeRow); } catch {} }
+            // Also save to primary DB so grades persist across code config changes
+            if (targetCode !== code && primaryDb) { try { await saveSetGrade(primaryDb, gradeRow); } catch {} }
           }
         } else {
           entry.error = "No parseable files";
@@ -261,6 +279,7 @@
 
   async function regradeStale() {
     const code = $connectCode;
+    const codes = $effectiveCodes;
     if (!code) return;
     const staleIds = new Set(
       $gradeHistory
@@ -269,12 +288,13 @@
     );
     if (staleIds.size === 0) return;
 
-    let db: Awaited<ReturnType<typeof getDb>> | null = null;
-    try { db = await getDb(code); } catch {}
-    if (db) {
-      for (const id of staleIds) {
-        try { await deleteSetGrade(db, id); } catch {}
-      }
+    for (const c of codes) {
+      try {
+        const db = await getDb(c);
+        for (const id of staleIds) {
+          try { await deleteSetGrade(db, id); } catch {}
+        }
+      } catch {}
     }
 
     gradeHistory.update((prev) => prev.filter((r) => !staleIds.has(r.matchId)));
@@ -489,6 +509,25 @@
               </div>
             </div>
           {/each}
+          {#if graded.length > 0}
+            {@const gradeCounts = ["S","A","B","C","D","F"].map((l) => graded.filter((r) => r.grade?.letter === l).length)}
+            {@const maxCount = Math.max(...gradeCounts, 1)}
+            <div style="flex: 1; display: flex; align-items: flex-end; gap: 6px; height: 72px; padding: 0 16px; min-width: 120px">
+              {#each ["S","A","B","C","D","F"] as letter, i}
+                <div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%">
+                  <div style="
+                    width: 100%; max-width: 28px;
+                    height: {gradeCounts[i] > 0 ? Math.max(Math.round((gradeCounts[i] / maxCount) * 52), 3) : 0}px;
+                    background: {gc(letter)};
+                    border-radius: 3px 3px 0 0;
+                    margin-bottom: 5px;
+                    {letter === 'S' ? `box-shadow: 0 0 6px ${gc('S')}55;` : ''}
+                  "></div>
+                  <div style="font-size: 11px; font-weight: 700; color: {gc(letter)}">{letter}</div>
+                </div>
+              {/each}
+            </div>
+          {/if}
           {#if avgScore !== null}
             {@const avgLetter = scoreToGrade(avgScore)}
             <div style="margin-left: auto; text-align: right">

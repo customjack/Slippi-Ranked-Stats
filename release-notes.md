@@ -18,10 +18,15 @@ Every completed ranked set now gets a letter grade — **S through F** — based
 - **Win bonus**: +5 to your overall score for winning the set
 - Grade history persists across sessions; stale grades are flagged with a one-click regrade button
 - Filter by grade letter, W/L result, character matchup; sort by date or score
+- **Grade distribution bar chart**: the summary card now shows a proportional bar chart for each letter grade
 - After a set completes in a live watcher session, the grade appears inline in the Live Session tab
 
 ### 🔗 Multi-code support
 Link multiple connect codes together in the sidebar — stats, sessions, matchups, and grade history all merge across every linked code. Useful if you have an alt, an old code, or changed codes mid-season. Add or remove codes at any time.
+
+- All codes in the list are equal — no "primary" designation needed
+- Grading works correctly for sets from any linked code
+- Grades are kept in sync across all linked code databases, so adding or removing a code doesn't require regrading
 
 ### 🔓 Ko-fi support
 Unlock premium access through Ko-fi in addition to Patreon. Discord role verification works for both.
