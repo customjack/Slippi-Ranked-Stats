@@ -7,7 +7,7 @@
   import LiveRankedSession from "./components/tabs/LiveRankedSession.svelte";
   import AllTimeStats from "./components/tabs/AllTimeStats.svelte";
   import GradeHistory from "./components/tabs/GradeHistory.svelte";
-  import { activeTab, connectCode, replayDir, games, snapshots, seasons, sidebarOpen, isPremium, setResultFlash, discordToken } from "./lib/store";
+  import { activeTab, connectCode, replayDir, games, snapshots, seasons, sidebarOpen, isPremium, setResultFlash, discordToken, effectiveCodes, primaryCode } from "./lib/store";
   import { getDb, getGames, getSnapshots, getSeasons } from "./lib/db";
   import { startWatcher, stopWatcher } from "./lib/watcher";
   import { verifyPatronRole } from "./lib/discord";
@@ -56,28 +56,39 @@
     }
   });
 
-  // Reload all data and auto-start watcher whenever the connect code changes
+  // Reload all data whenever the effective code list or primary code changes
   $effect(() => {
-    const code = $connectCode;
-    if (!code) return;
+    const codes = $effectiveCodes;
+    const primary = $primaryCode;
+    if (codes.length === 0) return;
     (async () => {
       try {
-        const db = await getDb(code);
-        const loadedGames = await getGames(db);
-        games.set(loadedGames);
-        const loadedSnaps = await getSnapshots(db, code);
+        // Union games from all codes in the profile
+        const allGameArrays = await Promise.all(
+          codes.map(async (c) => {
+            const db = await getDb(c);
+            return getGames(db);
+          })
+        );
+        const merged = allGameArrays
+          .flat()
+          .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        games.set(merged);
+
+        // Snapshots and seasons only from the primary code
+        const primaryDb = await getDb(primary);
+        const loadedSnaps = await getSnapshots(primaryDb, primary);
         snapshots.set(loadedSnaps);
-        const loadedSeasons = await getSeasons(db, code);
+        const loadedSeasons = await getSeasons(primaryDb, primary);
         seasons.set(loadedSeasons);
 
-        // Stop any watcher running for a previous account, then restart for the new code
+        // Watcher on primary code only
         const dir = get(replayDir);
         if (dir) {
           await stopWatcher();
-          startWatcher(dir, code, db).catch(() => {});
+          startWatcher(dir, primary, primaryDb).catch(() => {});
         }
       } catch {
-        // DB not ready yet — user hasn't scanned for this code
         games.set([]);
         snapshots.set([]);
         seasons.set([]);

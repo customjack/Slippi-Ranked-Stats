@@ -13,6 +13,22 @@ function persisted<T>(key: string, initial: T) {
 
 export const connectCode = persisted<string>("srs_connectCode", "");
 export const replayDir = persisted<string>("srs_replayDir", "");
+
+// ── Multi-code support ─────────────────────────────────────────────────────
+
+// Additional codes linked to the primary connectCode.
+// Stats, sessions, and grade history are unioned across all effective codes.
+// Rating, snapshots, and live session watcher always use connectCode (primary).
+export const linkedCodes = persisted<string[]>("srs_linkedCodes", []);
+
+// All codes to load game data from
+export const effectiveCodes = derived(
+  [connectCode, linkedCodes],
+  ([$code, $linked]) => ($code ? [$code, ...$linked.filter((c) => c !== $code)] : [])
+);
+
+// Alias used by App.svelte (always the primary connect code)
+export const primaryCode = derived(connectCode, ($code) => $code);
 export const dateRange = persisted<"30d" | "90d" | "all">("srs_dateRange", "all");
 export const isPremium = persisted<boolean>("srs_isPremium", false);
 export const discordToken = persisted<string | null>("srs_discordToken", null);

@@ -1,7 +1,10 @@
 <script lang="ts">
-  import { cleanSets as sets, sessions } from "../../lib/store";
+  import { cleanSets as sets, sessions, type Session } from "../../lib/store";
   import { STAGES } from "../../lib/parser";
   import BarChart from "../charts/BarChart.svelte";
+  import SessionView from "../SessionView.svelte";
+
+  let selectedSession = $state<Session | null>(null);
 
   const MIN_SETS_HOUR = 3;
 
@@ -95,6 +98,19 @@
     a.click();
   }
 </script>
+
+{#if selectedSession}
+  <div style="margin-bottom: 16px">
+    <button
+      onclick={() => selectedSession = null}
+      style="background:var(--card); border:1px solid var(--border); color:var(--text); padding:6px 14px; border-radius:6px; cursor:pointer; font-size:13px; font-weight:600"
+    >← Back to All-Time Stats</button>
+    <span style="font-size:12px; color:var(--muted); margin-left:12px">
+      {selectedSession.start.slice(0, 10)} · {fmt(selectedSession.durationMin)} · {selectedSession.sets.length} sets
+    </span>
+  </div>
+  <SessionView session={selectedSession} />
+{:else}
 
 <!-- Summary cards row -->
 <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap:12px; margin-bottom:16px">
@@ -191,11 +207,14 @@
   <div class="card" style="padding:0; overflow:hidden; max-height:300px; overflow-y:auto">
     <table>
       <thead>
-        <tr><th>#</th><th>Date</th><th>Duration</th><th>Sets</th><th>W</th><th>L</th><th>Win %</th></tr>
+        <tr><th>#</th><th>Date</th><th>Duration</th><th>Sets</th><th>W</th><th>L</th><th>Win %</th><th></th></tr>
       </thead>
       <tbody>
         {#each [...$sessions].reverse() as s, i}
-          <tr>
+          <tr
+            onclick={() => selectedSession = s}
+            style="cursor:pointer"
+          >
             <td class="muted">{$sessions.length - i}</td>
             <td>{s.start.slice(0, 10)}</td>
             <td class="muted">{fmt(s.durationMin)}</td>
@@ -205,9 +224,12 @@
             <td class={s.sets.length > 0 ? (s.setWins / s.sets.length >= 0.5 ? "win-text" : "loss-text") : ""}>
               {s.sets.length > 0 ? ((s.setWins / s.sets.length) * 100).toFixed(1) + "%" : "—"}
             </td>
+            <td style="color:var(--muted); font-size:11px">›</td>
           </tr>
         {/each}
       </tbody>
     </table>
   </div>
+{/if}
+
 {/if}

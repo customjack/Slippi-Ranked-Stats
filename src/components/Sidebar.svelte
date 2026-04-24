@@ -5,7 +5,7 @@
     connectCode, replayDir, dateRange,
     games, snapshots, seasons,
     isScanning, isFetchingSnapshot, scanProgress, statusMessage, sidebarOpen, isPremium,
-    discordToken, discordUsername,
+    discordToken, discordUsername, linkedCodes,
   } from "../lib/store";
   import { startDiscordAuth, verifyPatronRole, disconnectDiscord } from "../lib/discord";
 
@@ -20,6 +20,22 @@
   let codeInput = $state($connectCode);
   let dirInput = $state($replayDir);
   let isVerifying = $state(false);
+
+  // Linked codes
+  let linkInput = $state("");
+  let showLinkInput = $state(false);
+
+  function addLinkedCode() {
+    const code = linkInput.trim().toUpperCase();
+    if (!code || code === $connectCode || $linkedCodes.includes(code)) return;
+    linkedCodes.update((prev) => [...prev, code]);
+    linkInput = "";
+    showLinkInput = false;
+  }
+
+  function removeLinkedCode(code: string) {
+    linkedCodes.update((prev) => prev.filter((c) => c !== code));
+  }
 
   async function handleRecheck() {
     isVerifying = true;
@@ -142,6 +158,45 @@
       bind:value={codeInput}
       onchange={() => connectCode.set(codeInput.trim().toUpperCase())}
     />
+
+    <!-- Linked codes -->
+    {#if $linkedCodes.length > 0 || showLinkInput}
+      <div style="margin-top: 6px">
+        <div style="font-size:10px; font-weight:700; color:var(--muted); letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px">
+          Linked Codes
+          <span style="font-weight:400; font-style:italic; text-transform:none; letter-spacing:0"> (stats merged)</span>
+        </div>
+        {#each $linkedCodes as code}
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:3px">
+            <span style="font-size:12px; font-weight:600; flex:1">{code}</span>
+            <button
+              onclick={() => removeLinkedCode(code)}
+              style="background:none; border:none; color:var(--muted); cursor:pointer; font-size:14px; padding:0 2px; line-height:1"
+              title="Remove"
+            >×</button>
+          </div>
+        {/each}
+        {#if showLinkInput}
+          <div style="display:flex; gap:4px; margin-top:4px">
+            <input
+              type="text"
+              placeholder="CODE#123"
+              bind:value={linkInput}
+              onkeydown={(e) => { if (e.key === "Enter") addLinkedCode(); if (e.key === "Escape") { showLinkInput = false; linkInput = ""; } }}
+              style="flex:1; font-size:12px"
+            />
+            <button class="btn btn-primary" style="font-size:11px; padding:4px 8px" onclick={addLinkedCode}>Add</button>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <button
+      onclick={() => { showLinkInput = !showLinkInput; linkInput = ""; }}
+      style="margin-top:5px; background:none; border:none; color:var(--muted); cursor:pointer; font-size:11px; padding:0; text-decoration:underline; text-underline-offset:2px; text-align:left"
+    >
+      {showLinkInput ? "Cancel" : $linkedCodes.length > 0 ? "+ Link another code" : "+ Link another code"}
+    </button>
   </div>
 
   <!-- Replay Folder -->
