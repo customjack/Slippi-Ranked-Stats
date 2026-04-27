@@ -1,3 +1,13 @@
+## What's New in v1.4.1
+
+### Bug fixes
+
+- **Grading tab — set count corrected**: "X of Y sets graded" no longer reports an inflated count when you have linked codes. Previously, grades saved for sets from a linked code were counted in the numerator even after that code was removed. The count, grade distribution chart, and stale-grade detection now all scope correctly to your active code list.
+- **Rating History — season-end marker**: The orange diamond marking the end of a past season now correctly appears on the chart. It was previously invisible because the marker's timestamp didn't align with any data point on the axis.
+- **Rating History — multi-code note**: A note now appears when you have linked codes explaining that rating history tracks only the code at the top of your list.
+
+---
+
 ## What's New in v1.4.0
 
 ### ⚡ Ranked Sessions tab (redesigned)

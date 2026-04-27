@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { snapshots, seasons, sets } from "../../lib/store";
+  import { snapshots, seasons, sets, connectCode, linkedCodes } from "../../lib/store";
   import LineChart from "../charts/LineChart.svelte";
 
   // Convert an ISO timestamp string to a local-time display string "YYYY-MM-DD HH:MM"
@@ -46,10 +46,18 @@
     return snaps.map((s) => ({ x: fmtTs(s.timestamp), y: s.rating }));
   })());
 
-  // Season end markers
-  let seasonMarkers = $derived($seasons
-    .filter((s) => s.rating > 0)
-    .map((s) => ({ x: s.season_end ? fmtTs(s.season_end) : "", y: s.rating, name: s.season_name })));
+  // Season end markers — x must match an xData tick (snapshot timestamp).
+  // Use the last snapshot at or before season_end so ECharts can place the diamond.
+  let seasonMarkers = $derived((() => {
+    return $seasons
+      .filter((s) => s.rating > 0 && s.season_end)
+      .map((s) => {
+        const snap = [...$snapshots].filter((sn) => sn.timestamp <= s.season_end).at(-1);
+        if (!snap) return null;
+        return { x: fmtTs(snap.timestamp), y: s.rating, name: s.season_name };
+      })
+      .filter((m): m is { x: string; y: number; name: string } => m !== null);
+  })());
 
 
   // Rolling 20-snapshot average on the rating line
@@ -98,6 +106,11 @@
 <p class="muted" style="font-size:11px; margin-bottom:12px">
     Rating history only includes sets played while this app was running. Matches played before you started using SRS will not appear here.
   </p>
+  {#if $linkedCodes.length > 0}
+    <p class="muted" style="font-size:11px; margin-bottom:12px">
+      Rating history reflects <strong style="color:var(--text)">{$connectCode}</strong> only. When using multiple linked codes, only the code at the top of the list is tracked here.
+    </p>
+  {/if}
 
   <!-- Rating over time -->
   {#if ratingData.length > 1}

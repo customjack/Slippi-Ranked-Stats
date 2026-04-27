@@ -106,8 +106,13 @@
       .reverse()
   );
 
+  // Grade history restricted to sets that exist in the current code's completedSets.
+  // Without this, double-saved grades from other linked codes inflate counts.
+  let completedSetIds = $derived(new Set(completedSets.map((s) => s.match_id)));
+  let activeHistory = $derived($gradeHistory.filter((r) => completedSetIds.has(r.matchId)));
+
   // Set IDs that already have a grade result (successful or errored)
-  let gradedIds = $derived(new Set($gradeHistory.map((r) => r.matchId)));
+  let gradedIds = $derived(new Set(activeHistory.map((r) => r.matchId)));
 
   // Only sets not yet graded — shown in button label
   let ungradedSets = $derived(completedSets.filter((s) => !gradedIds.has(s.match_id)));
@@ -119,15 +124,15 @@
   let filterOppChar    = $state<string | null>(null);
   let sortMode = $state<"date-desc" | "date-asc" | "score-desc" | "score-asc">("date-desc");
 
-  let uniquePlayerChars = $derived([...new Set($gradeHistory.map((r) => r.playerChar))].sort());
-  let uniqueOppChars    = $derived([...new Set($gradeHistory.map((r) => r.opponentChar))].sort());
+  let uniquePlayerChars = $derived([...new Set(activeHistory.map((r) => r.playerChar))].sort());
+  let uniqueOppChars    = $derived([...new Set(activeHistory.map((r) => r.opponentChar))].sort());
 
   let staleCount = $derived(
-    $gradeHistory.filter((r) => r.baselineVersion !== null && r.baselineVersion !== BENCHMARKS_VERSION).length
+    activeHistory.filter((r) => r.baselineVersion !== null && r.baselineVersion !== BENCHMARKS_VERSION).length
   );
 
   let sortedHistory = $derived((() => {
-    let h = [...$gradeHistory];
+    let h = [...activeHistory];
     if (filterLetter     !== null)  h = h.filter((r) => r.grade?.letter === filterLetter);
     if (filterResult     !== "all") h = h.filter((r) => r.result === filterResult);
     if (filterPlayerChar !== null)  h = h.filter((r) => r.playerChar === filterPlayerChar);
@@ -282,7 +287,7 @@
     const codes = $effectiveCodes;
     if (!code) return;
     const staleIds = new Set(
-      $gradeHistory
+      activeHistory
         .filter((r) => r.baselineVersion !== null && r.baselineVersion !== BENCHMARKS_VERSION)
         .map((r) => r.matchId)
     );
@@ -406,8 +411,8 @@
         <div class="section-title" style="margin-bottom: 4px">Grading</div>
         <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px">
           Each set scored across Neutral, Punish, and Defense against community baselines.
-          {#if $gradeHistory.length > 0 && !$gradeHistoryBusy}
-            <span style="color: var(--text)">{$gradeHistory.filter((r) => r.grade !== null).length} of {completedSets.length} sets graded.</span>
+          {#if activeHistory.length > 0 && !$gradeHistoryBusy}
+            <span style="color: var(--text)">{activeHistory.filter((r) => r.grade !== null).length} of {completedSets.length} sets graded.</span>
             {#if ungradedSets.length === 0}
               <span style="color: #2ecc71"> Up to date.</span>
             {/if}
@@ -441,7 +446,7 @@
         >
           {#if $gradeHistoryBusy}
             Grading… {$gradeHistoryProgress.current} / {$gradeHistoryProgress.total}
-          {:else if $gradeHistory.length === 0}
+          {:else if activeHistory.length === 0}
             Grade All Sets
           {:else if ungradedSets.length > 0}
             Grade New Sets ({ungradedSets.length})
@@ -449,7 +454,7 @@
             Up to Date
           {/if}
         </button>
-        {#if $gradeHistory.length > 0 && !$gradeHistoryBusy}
+        {#if activeHistory.length > 0 && !$gradeHistoryBusy}
           <div style="display: flex; gap: 8px; align-items: center">
             {#if staleCount > 0}
               <button
@@ -489,7 +494,7 @@
     {/if}
   </div>
 
-  {#if $gradeHistory.length > 0}
+  {#if activeHistory.length > 0}
     <!-- Distribution summary -->
     {#if !$gradeHistoryBusy}
       {@const graded = sortedHistory.filter((r) => r.grade !== null)}
