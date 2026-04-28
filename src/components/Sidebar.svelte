@@ -64,9 +64,24 @@
     }
   }
 
+  async function buildDbsByCode() {
+    const dbs: Record<string, import("@tauri-apps/plugin-sql").default> = {};
+    for (const c of allCodes) dbs[c] = await getDb(c);
+    return dbs;
+  }
+
+  async function loadMergedGames(dbsByCode: Record<string, import("@tauri-apps/plugin-sql").default>) {
+    const arrays = await Promise.all(
+      allCodes.map(async (c) => {
+        const rows = await getGames(dbsByCode[c]);
+        return rows.map((g) => ({ ...g, sourceCode: c }));
+      })
+    );
+    return arrays.flat().sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  }
+
   async function handleScan() {
-    const code = $connectCode;
-    if (!code || !dirInput) {
+    if (allCodes.length === 0 || !dirInput) {
       statusMessage.set("Add a connect code and folder first.");
       return;
     }
@@ -76,9 +91,9 @@
     statusMessage.set("");
 
     try {
-      const db = await getDb(code);
-      const { filesScanned, gamesInserted } = await scanDirectory(dirInput, code, db, (p) => scanProgress.set(p));
-      const loaded = await getGames(db);
+      const dbsByCode = await buildDbsByCode();
+      const { filesScanned, gamesInserted } = await scanDirectory(dirInput, allCodes, dbsByCode, (p) => scanProgress.set(p));
+      const loaded = await loadMergedGames(dbsByCode);
       games.set(loaded);
       statusMessage.set(`Scan complete — ${filesScanned} files, ${gamesInserted} ranked replays found (${loaded.length} total in DB).`);
     } catch (e: any) {
@@ -90,8 +105,7 @@
   }
 
   async function handleForceRescan() {
-    const code = $connectCode;
-    if (!code || !dirInput) {
+    if (allCodes.length === 0 || !dirInput) {
       statusMessage.set("Add a connect code and folder first.");
       return;
     }
@@ -101,9 +115,9 @@
     statusMessage.set("Clearing scan history…");
     try {
       await clearScannedFiles();
-      const db = await getDb(code);
-      const { filesScanned, gamesInserted, totalSlpFound, debugPath, firstError } = await scanDirectory(dirInput, code, db, (p) => scanProgress.set(p));
-      const loaded = await getGames(db);
+      const dbsByCode = await buildDbsByCode();
+      const { filesScanned, gamesInserted, totalSlpFound, debugPath, firstError } = await scanDirectory(dirInput, allCodes, dbsByCode, (p) => scanProgress.set(p));
+      const loaded = await loadMergedGames(dbsByCode);
       games.set(loaded);
       statusMessage.set(`path:"${debugPath}" | ${totalSlpFound} .slp | ${filesScanned} new | ${gamesInserted} ranked | ${loaded.length} in DB${firstError ? ` | err: ${firstError}` : ""}`);
     } catch (e: any) {

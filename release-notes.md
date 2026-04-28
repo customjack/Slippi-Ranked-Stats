@@ -1,3 +1,11 @@
+## What's New in v1.4.2
+
+### Bug fixes
+
+- **Scanner — linked codes now picked up on scan**: Previously, scanning a replay folder only ingested replays where your primary connect code was a participant. Replays played under a linked code were silently skipped and permanently marked as already-scanned, so they wouldn't appear even after adding the code. The scanner now processes all linked codes in a single pass and routes each replay to the correct code's database. If you had replays missing for a linked code, a **Force Rescan All** will pick them up.
+
+---
+
 ## What's New in v1.4.1
 
 ### Bug fixes

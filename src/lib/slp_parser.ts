@@ -931,3 +931,131 @@ export function parseSlpBytes(
     wavedash_miss_rate:     advStats.wavedash_miss_rate,
   }];
 }
+
+/**
+ * Parse once, return one game row per matching code. Used for multi-code scans
+ * so the event stream and metadata are not re-parsed for each linked code.
+ */
+export function parseSlpBytesMultiCode(
+  bytes: Uint8Array,
+  filepath: string,
+  codes: string[]
+): { code: string; game: ParsedGameRow }[] {
+  let hasModeStr = false;
+  for (let i = 0; i < bytes.length - 4; i++) {
+    if (bytes[i] === 109 && bytes[i+1] === 111 && bytes[i+2] === 100 && bytes[i+3] === 101 && bytes[i+4] === 46) {
+      hasModeStr = true;
+      break;
+    }
+  }
+  if (!hasModeStr) return [];
+
+  let stream: StreamResult;
+  try { stream = parseEventStream(bytes); } catch { return []; }
+  if (!stream.matchId) return [];
+
+  const matchTypeRaw = stream.matchId.split("-")[0];
+  const match_type = matchTypeRaw.replace("mode.", "");
+  if (match_type !== "ranked" && match_type !== "unranked") return [];
+
+  let meta: MetadataResult;
+  try { meta = parseMetadata(bytes); } catch { return []; }
+
+  const ports = Object.keys(meta.players).map(Number);
+  if (ports.length < 2) return [];
+
+  const filename = filepath.split(/[/\\]/).pop() ?? filepath;
+  const out: { code: string; game: ParsedGameRow }[] = [];
+
+  for (const connectCode of codes) {
+    const cc = connectCode.toUpperCase();
+    const playerPort = ports.find((p) => meta.players[p].connectCode.toUpperCase() === cc);
+    if (playerPort === undefined) continue;
+
+    const oppPort = ports.find((p) => p !== playerPort);
+    if (oppPort === undefined) continue;
+
+    const { gameEndMethod, lrasInitiator, finalStocks, durationFrames } = stream;
+
+    let result: string;
+    if (gameEndMethod === METHOD_GAME) {
+      const ps = finalStocks[playerPort] ?? -1;
+      const os = finalStocks[oppPort] ?? -1;
+      if (ps > os) result = "win";
+      else if (ps < os) result = "loss";
+      else continue;
+    } else if (gameEndMethod === METHOD_NO_CONTEST) {
+      if (lrasInitiator === playerPort) result = "lras_loss";
+      else if (lrasInitiator >= 0) result = "lras_win";
+      else continue;
+    } else {
+      continue;
+    }
+
+    const kills  = 4 - (finalStocks[oppPort]    ?? 0);
+    const deaths = 4 - (finalStocks[playerPort] ?? 0);
+    const convStats = computeConversionStats(playerPort, oppPort, stream.frameData, stream.totalDamageTaken);
+    const winLoss: "win" | "loss" = (result === "win" || result === "lras_win") ? "win" : "loss";
+    const advStats = computeAdvancedStats(playerPort, oppPort, stream.frameData, winLoss);
+
+    out.push({
+      code: connectCode,
+      game: {
+        filename,
+        filepath,
+        timestamp: meta.timestamp,
+        match_type,
+        player_port: playerPort,
+        player_char_id: meta.players[playerPort].charId ?? -1,
+        opponent_code: meta.players[oppPort].connectCode,
+        opponent_char_id: meta.players[oppPort].charId ?? -1,
+        stage_id: stream.stageId,
+        result,
+        duration_frames: durationFrames,
+        match_id: stream.matchId,
+        kills,
+        deaths,
+        openings_per_kill:        convStats.openings_per_kill,
+        damage_per_opening:       convStats.damage_per_opening,
+        neutral_win_ratio:        convStats.neutral_win_ratio,
+        counter_hit_rate:         convStats.counter_hit_rate,
+        opening_conversion_rate:  convStats.opening_conversion_rate,
+        inputs_per_minute: (() => {
+          const inputs = stream.inputCounts[playerPort] ?? 0;
+          const mins   = durationFrames / 3600;
+          return mins > 0 ? Math.round(inputs / mins) : null;
+        })(),
+        l_cancel_ratio: (() => {
+          const attempts  = stream.lCancelAttempts[playerPort]  ?? 0;
+          const successes = stream.lCancelSuccesses[playerPort] ?? 0;
+          return attempts > 0 ? successes / attempts : null;
+        })(),
+        avg_kill_percent: (() => {
+          const p = convStats.attributedKillPercents;
+          return p.length > 0 ? p.reduce((a, b) => a + b, 0) / p.length : null;
+        })(),
+        avg_death_percent: (() => {
+          const p = convStats.attributedDeathPercents;
+          return p.length > 0 ? p.reduce((a, b) => a + b, 0) / p.length : null;
+        })(),
+        defensive_option_rate: (() => {
+          const opts = stream.defensiveOptions[playerPort] ?? 0;
+          const mins = durationFrames / 3600;
+          return mins > 0 ? opts / mins : null;
+        })(),
+        stage_control_ratio:    advStats.stage_control_ratio,
+        lead_maintenance_rate:  advStats.lead_maintenance_rate,
+        tech_chase_rate:        advStats.tech_chase_rate,
+        edgeguard_success_rate: advStats.edgeguard_success_rate,
+        hit_advantage_rate:     advStats.hit_advantage_rate,
+        recovery_success_rate:  advStats.recovery_success_rate,
+        avg_stock_duration:     advStats.avg_stock_duration,
+        respawn_defense_rate:   advStats.respawn_defense_rate,
+        comeback_rate:          advStats.comeback_rate,
+        wavedash_miss_rate:     advStats.wavedash_miss_rate,
+      },
+    });
+  }
+
+  return out;
+}

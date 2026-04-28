@@ -239,7 +239,7 @@ async function processSlpFile(
     }
 
     // Mark as scanned so manual scanner skips it
-    await markFilesScanned([filename]);
+    await markFilesScanned([filename], connectCode);
 
     const loaded = await getGames(db);
     games.set(loaded);

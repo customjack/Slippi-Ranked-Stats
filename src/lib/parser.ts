@@ -1,5 +1,5 @@
 import { readFile, readDir } from "@tauri-apps/plugin-fs";
-import { parseSlpBytes, type ParsedGameRow } from "./slp_parser";
+import { parseSlpBytes, parseSlpBytesMultiCode, type ParsedGameRow } from "./slp_parser";
 import { getScannedFilenames, markFilesScanned, insertGame, type GameRow } from "./db";
 import type Database from "@tauri-apps/plugin-sql";
 
@@ -94,21 +94,24 @@ export function cancelScan() { _scanCancelled = true; }
 
 export async function scanDirectory(
   dirPath: string,
-  connectCode: string,
-  db: Database,
+  codes: string[],
+  dbsByCode: Record<string, Database>,
   onProgress?: (p: ScanProgress) => void
 ): Promise<ScanResult> {
   _scanCancelled = false;
 
   const slpFiles = await collectSlpFiles(dirPath);
-  const already = await getScannedFilenames();
 
-  const toProcess = slpFiles.filter((f) => !already.has(f.name));
+  // Load already-scanned sets per code, then find files needing work for any code.
+  const alreadyByCode: Record<string, Set<string>> = {};
+  for (const c of codes) alreadyByCode[c] = await getScannedFilenames(c);
+  const toProcess = slpFiles.filter((f) => codes.some((c) => !alreadyByCode[c].has(f.name)));
   const alreadyCount = slpFiles.length - toProcess.length;
 
   let scanned = 0;
   let gamesInserted = 0;
-  const newlyScanned: string[] = [];
+  const newlyScannedByCode: Record<string, string[]> = {};
+  for (const c of codes) newlyScannedByCode[c] = [];
   const debugPath = dirPath;
   let firstError: string | null = null;
 
@@ -122,14 +125,16 @@ export async function scanDirectory(
     if (_scanCancelled) break;
     const batch = toProcess.slice(i, i + CONCURRENCY);
 
-    // Parse files concurrently (bounded by CONCURRENCY)
+    // Parse files concurrently (bounded by CONCURRENCY), trying only codes
+    // that haven't seen each file yet.
     const results = await Promise.all(
       batch.map(async (entry) => {
+        const pendingCodes = codes.filter((c) => !alreadyByCode[c].has(entry.name));
         try {
-          const games = await parseSlpFile(entry.path, connectCode);
-          return { name: entry.name, games, error: null };
+          const parsed = await parseSlpFileMulti(entry.path, pendingCodes);
+          return { name: entry.name, pendingCodes, parsed, error: null };
         } catch (e: any) {
-          return { name: entry.name, games: [], error: String(e?.message ?? e) };
+          return { name: entry.name, pendingCodes, parsed: [] as { code: string; game: ParsedGameRow }[], error: String(e?.message ?? e) };
         }
       })
     );
@@ -141,19 +146,26 @@ export async function scanDirectory(
         // do NOT mark as scanned so they can be retried
         continue;
       }
-      for (const g of r.games) {
-        await insertGame(db, g);
+      for (const { code, game } of r.parsed) {
+        await insertGame(dbsByCode[code], game);
         gamesInserted++;
       }
-      newlyScanned.push(r.name);
+      for (const code of r.pendingCodes) {
+        newlyScannedByCode[code].push(r.name);
+        alreadyByCode[code].add(r.name);
+      }
     }
 
     scanned += batch.length;
     onProgress?.({ scanned, total: toProcess.length, alreadyProcessed: alreadyCount });
   }
 
-  await markFilesScanned(newlyScanned);
-  return { filesScanned: newlyScanned.length, gamesInserted, totalSlpFound: slpFiles.length, debugPath, firstError };
+  for (const code of codes) {
+    await markFilesScanned(newlyScannedByCode[code], code);
+  }
+
+  const totalNewFiles = new Set(Object.values(newlyScannedByCode).flat()).size;
+  return { filesScanned: totalNewFiles, gamesInserted, totalSlpFound: slpFiles.length, debugPath, firstError };
 }
 
 // ── File collection ────────────────────────────────────────────────────────
@@ -193,6 +205,14 @@ export async function parseSlpFile(
 ): Promise<ParsedGameRow[]> {
   const bytes = await readFile(filepath);
   return parseSlpBytes(bytes, filepath, connectCode);
+}
+
+export async function parseSlpFileMulti(
+  filepath: string,
+  codes: string[]
+): Promise<{ code: string; game: ParsedGameRow }[]> {
+  const bytes = await readFile(filepath);
+  return parseSlpBytesMultiCode(bytes, filepath, codes);
 }
 
 export type { ParsedGameRow };

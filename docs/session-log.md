@@ -44,6 +44,19 @@ Tester's 10 test `.slp` files. Added to `.gitignore`. Stay on local disk; not co
 
 - Mac stays as a dev environment going forward. Joey will copy `.slp` files over for proper feature testing later.
 - Multi-code scan fix is **not started**. Work picks up on Windows from `docs/multi-code-scan-fix.md`. After implementation, cut a new release.
+## Future Ideas (not yet scheduled)
+
+### Unranked Stats Mode
+
+Revisit adding an Unranked mode that surfaces stats for non-ranked replays.
+
+**Design notes from 2026-04-28 session:**
+- The parser already reads `match_type` and the DB already stores unranked games — the infrastructure is ~60% there.
+- Key design challenge: ranked stats are **set-based** (games grouped by `match_id`), but unranked is **individual-game-based**. "Sessions" would need to be defined by time proximity rather than match groupings, and all aggregates (matchup stats, all-time stats) would need to operate at the per-game level.
+- It's unclear whether Slippi assigns `match_id` to unranked lobbies; worth checking before designing the session grouping.
+- Grading is intentionally excluded from unranked mode (note: the HuggingFace benchmarks were trained on all replays, not ranked-only, so they'd be valid if grading is ever added later).
+- Rating Progression tab is N/A for unranked; Live Session tracking would need its own simplified logic (no rating snapshot fetch).
+- The `statMode` store toggle approach is sound — the main work is mode-aware logic in the Sessions tab and new per-game aggregate derivations.
 
 ---
 

@@ -34,9 +34,25 @@ export async function getScannedDb(): Promise<Database> {
     _scanned = await Database.load(SCANNED_PATH);
     await _scanned.execute(`
       CREATE TABLE IF NOT EXISTS scanned_files (
-        filename TEXT PRIMARY KEY
+        filename     TEXT NOT NULL,
+        connect_code TEXT NOT NULL,
+        PRIMARY KEY (filename, connect_code)
       )
     `);
+    // Migrate old single-column schema: if connect_code doesn't exist, drop and recreate.
+    // The scanned cache is non-precious (equivalent to Force Rescan), so this is safe.
+    try {
+      await _scanned.select(`SELECT connect_code FROM scanned_files LIMIT 0`);
+    } catch {
+      await _scanned.execute(`DROP TABLE scanned_files`);
+      await _scanned.execute(`
+        CREATE TABLE scanned_files (
+          filename     TEXT NOT NULL,
+          connect_code TEXT NOT NULL,
+          PRIMARY KEY (filename, connect_code)
+        )
+      `);
+    }
   }
   return _scanned;
 }
@@ -281,10 +297,11 @@ export async function getSeasons(
 
 // ── Scanned files ──────────────────────────────────────────────────────────
 
-export async function getScannedFilenames(): Promise<Set<string>> {
+export async function getScannedFilenames(connectCode: string): Promise<Set<string>> {
   const sdb = await getScannedDb();
   const rows = await sdb.select<{ filename: string }[]>(
-    `SELECT filename FROM scanned_files`
+    `SELECT filename FROM scanned_files WHERE connect_code = $1`,
+    [connectCode]
   );
   return new Set(rows.map((r) => r.filename));
 }
@@ -318,16 +335,17 @@ export async function getGamesVsOpponent(
   );
 }
 
-export async function markFilesScanned(filenames: string[]): Promise<void> {
+export async function markFilesScanned(filenames: string[], connectCode: string): Promise<void> {
   if (filenames.length === 0) return;
   const sdb = await getScannedDb();
   const CHUNK = 500;
   for (let i = 0; i < filenames.length; i += CHUNK) {
     const chunk = filenames.slice(i, i + CHUNK);
-    const placeholders = chunk.map((_, j) => `($${j + 1})`).join(", ");
+    const placeholders = chunk.map((_, j) => `($${j * 2 + 1}, $${j * 2 + 2})`).join(", ");
+    const values = chunk.flatMap((f) => [f, connectCode]);
     await sdb.execute(
-      `INSERT OR IGNORE INTO scanned_files (filename) VALUES ${placeholders}`,
-      chunk
+      `INSERT OR IGNORE INTO scanned_files (filename, connect_code) VALUES ${placeholders}`,
+      values
     );
   }
 }
