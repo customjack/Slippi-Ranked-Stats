@@ -12,7 +12,27 @@ function persisted<T>(key: string, initial: T) {
 }
 
 export const connectCode = persisted<string>("srs_connectCode", "");
-export const replayDir = persisted<string>("srs_replayDir", "");
+
+// Migrate old single-dir setting to the multi-dir array on first load.
+function migrateReplayDirs(): string[] {
+  const old = localStorage.getItem("srs_replayDir");
+  if (old !== null) {
+    const parsed = JSON.parse(old) as string;
+    localStorage.removeItem("srs_replayDir");
+    return parsed ? [parsed] : [];
+  }
+  return [];
+}
+
+function persistedReplayDirs(): ReturnType<typeof writable<string[]>> {
+  const stored = localStorage.getItem("srs_replayDirs");
+  const initial = stored !== null ? (JSON.parse(stored) as string[]) : migrateReplayDirs();
+  const store = writable<string[]>(initial);
+  store.subscribe((v) => localStorage.setItem("srs_replayDirs", JSON.stringify(v)));
+  return store;
+}
+
+export const replayDirs = persistedReplayDirs();
 
 // ── Multi-code support ─────────────────────────────────────────────────────
 

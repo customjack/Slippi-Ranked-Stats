@@ -7,6 +7,7 @@
   } from "../../lib/store";
   import { startDiscordAuth, verifyPatronRole } from "../../lib/discord";
   import { open as openUrl } from "@tauri-apps/plugin-shell";
+  import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import { CHARACTERS, parseSlpFile } from "../../lib/parser";
   import { gradeSet, scoreToGrade, formatStatValue, CATEGORY_DEFS, type GradeLetter, type CategoryKey, type SetGrade } from "../../lib/grading";
   import { getDb, saveSetGrade, getAllSetGrades, deleteSetGrade, type SetGradeRow } from "../../lib/db";
@@ -109,6 +110,11 @@
   // Without this, double-saved grades from other linked codes inflate counts.
   let completedSetIds = $derived(new Set(completedSets.map((s) => s.match_id)));
   let activeHistory = $derived($gradeHistory.filter((r) => completedSetIds.has(r.matchId)));
+
+  // Map from match_id to replay filepaths for the "Open Replays" button
+  let setFilepaths = $derived(
+    new Map(completedSets.map((s) => [s.match_id, s.games.map((g) => g.filepath).filter(Boolean)]))
+  );
 
   // Set IDs that already have a grade result (successful or errored)
   let gradedIds = $derived(new Set(activeHistory.map((r) => r.matchId)));
@@ -971,8 +977,20 @@
 
           <!-- Inline expanded breakdown -->
           {#if isSelected && r.grade}
+            {@const fps = setFilepaths.get(r.matchId) ?? []}
             <div style="padding: 0 14px 14px">
               <SetGradeDisplay grade={r.grade} detailed={$isPremium} />
+              {#if fps.length > 0}
+                <button
+                  onclick={() => revealItemInDir(fps[0])}
+                  style="margin-top:10px; background:none; border:1px solid var(--border); border-radius:5px; color:var(--muted); cursor:pointer; font-size:11px; padding:4px 10px; width:100%; text-align:left"
+                  onmouseenter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--text)'; (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--text)'; }}
+                  onmouseleave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--muted)'; (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)'; }}
+                  title={fps[0]}
+                >
+                  📂 Open replays folder ({fps.length} {fps.length === 1 ? 'file' : 'files'})
+                </button>
+              {/if}
             </div>
           {/if}
         </div>

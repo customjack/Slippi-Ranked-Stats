@@ -1,6 +1,6 @@
 import { readFile, readDir } from "@tauri-apps/plugin-fs";
 import { parseSlpBytes, parseSlpBytesMultiCode, type ParsedGameRow } from "./slp_parser";
-import { getScannedFilenames, markFilesScanned, insertGame, type GameRow } from "./db";
+import { getScannedFilepaths, markFilesScanned, insertGame, type GameRow } from "./db";
 import type Database from "@tauri-apps/plugin-sql";
 
 // ── Lookup tables ──────────────────────────────────────────────────────────
@@ -93,26 +93,35 @@ let _scanCancelled = false;
 export function cancelScan() { _scanCancelled = true; }
 
 export async function scanDirectory(
-  dirPath: string,
+  dirPaths: string | string[],
   codes: string[],
   dbsByCode: Record<string, Database>,
   onProgress?: (p: ScanProgress) => void
 ): Promise<ScanResult> {
   _scanCancelled = false;
 
-  const slpFiles = await collectSlpFiles(dirPath);
+  const dirs = Array.isArray(dirPaths) ? dirPaths : [dirPaths];
+  const slpFiles = await collectSlpFilesFromDirs(dirs);
 
-  // Load already-scanned sets per code, then find files needing work for any code.
+  // Dedup by filepath across directories (handles overlapping roots)
+  const seen = new Set<string>();
+  const dedupedFiles = slpFiles.filter((f) => {
+    if (seen.has(f.path)) return false;
+    seen.add(f.path);
+    return true;
+  });
+
+  // Load already-scanned filepaths per code, then find files needing work for any code.
   const alreadyByCode: Record<string, Set<string>> = {};
-  for (const c of codes) alreadyByCode[c] = await getScannedFilenames(c);
-  const toProcess = slpFiles.filter((f) => codes.some((c) => !alreadyByCode[c].has(f.name)));
-  const alreadyCount = slpFiles.length - toProcess.length;
+  for (const c of codes) alreadyByCode[c] = await getScannedFilepaths(c);
+  const toProcess = dedupedFiles.filter((f) => codes.some((c) => !alreadyByCode[c].has(f.path)));
+  const alreadyCount = dedupedFiles.length - toProcess.length;
 
   let scanned = 0;
   let gamesInserted = 0;
   const newlyScannedByCode: Record<string, string[]> = {};
   for (const c of codes) newlyScannedByCode[c] = [];
-  const debugPath = dirPath;
+  const debugPath = dirs.join(", ");
   let firstError: string | null = null;
 
   // Process in batches — keep concurrency low to avoid flooding the Rust IPC
@@ -129,12 +138,12 @@ export async function scanDirectory(
     // that haven't seen each file yet.
     const results = await Promise.all(
       batch.map(async (entry) => {
-        const pendingCodes = codes.filter((c) => !alreadyByCode[c].has(entry.name));
+        const pendingCodes = codes.filter((c) => !alreadyByCode[c].has(entry.path));
         try {
           const parsed = await parseSlpFileMulti(entry.path, pendingCodes);
-          return { name: entry.name, pendingCodes, parsed, error: null };
+          return { filepath: entry.path, pendingCodes, parsed, error: null };
         } catch (e: any) {
-          return { name: entry.name, pendingCodes, parsed: [] as { code: string; game: ParsedGameRow }[], error: String(e?.message ?? e) };
+          return { filepath: entry.path, pendingCodes, parsed: [] as { code: string; game: ParsedGameRow }[], error: String(e?.message ?? e) };
         }
       })
     );
@@ -151,8 +160,8 @@ export async function scanDirectory(
         gamesInserted++;
       }
       for (const code of r.pendingCodes) {
-        newlyScannedByCode[code].push(r.name);
-        alreadyByCode[code].add(r.name);
+        newlyScannedByCode[code].push(r.filepath);
+        alreadyByCode[code].add(r.filepath);
       }
     }
 
@@ -165,7 +174,7 @@ export async function scanDirectory(
   }
 
   const totalNewFiles = new Set(Object.values(newlyScannedByCode).flat()).size;
-  return { filesScanned: totalNewFiles, gamesInserted, totalSlpFound: slpFiles.length, debugPath, firstError };
+  return { filesScanned: totalNewFiles, gamesInserted, totalSlpFound: dedupedFiles.length, debugPath, firstError };
 }
 
 // ── File collection ────────────────────────────────────────────────────────
@@ -194,6 +203,14 @@ async function walkDir(dirPath: string, results: FileEntry[], isRoot = false): P
 async function collectSlpFiles(dirPath: string): Promise<FileEntry[]> {
   const results: FileEntry[] = [];
   await walkDir(dirPath, results, true);
+  return results;
+}
+
+async function collectSlpFilesFromDirs(dirPaths: string[]): Promise<FileEntry[]> {
+  const results: FileEntry[] = [];
+  for (const dir of dirPaths) {
+    await walkDir(dir, results, true);
+  }
   return results;
 }
 

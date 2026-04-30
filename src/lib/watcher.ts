@@ -54,11 +54,12 @@ const _sessionOpponents = new Set<string>();
 const _completedMatchIds = new Set<string>();
 
 export async function startWatcher(
-  dir: string,
+  dirs: string | string[],
   connectCode: string,
   db: Database
 ): Promise<void> {
   if (_unwatch) return; // already running
+  const dirList = Array.isArray(dirs) ? dirs : [dirs];
 
   // Initialize session state from current store contents
   _knownMatchIds.clear();
@@ -107,7 +108,7 @@ export async function startWatcher(
   }
 
   _unwatch = await watch(
-    dir,
+    dirList,
     (event) => {
       const typeStr = typeof event.type === "string" ? event.type : JSON.stringify(event.type);
       const slpPaths = event.paths.filter((p) => p.endsWith(".slp"));

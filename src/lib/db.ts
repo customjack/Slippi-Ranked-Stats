@@ -34,22 +34,21 @@ export async function getScannedDb(): Promise<Database> {
     _scanned = await Database.load(SCANNED_PATH);
     await _scanned.execute(`
       CREATE TABLE IF NOT EXISTS scanned_files (
-        filename     TEXT NOT NULL,
+        filepath     TEXT NOT NULL,
         connect_code TEXT NOT NULL,
-        PRIMARY KEY (filename, connect_code)
+        PRIMARY KEY (filepath, connect_code)
       )
     `);
-    // Migrate old single-column schema: if connect_code doesn't exist, drop and recreate.
-    // The scanned cache is non-precious (equivalent to Force Rescan), so this is safe.
+    // Migrate old schemas (filename-keyed) to filepath-keyed. Non-precious — drop and recreate.
     try {
-      await _scanned.select(`SELECT connect_code FROM scanned_files LIMIT 0`);
+      await _scanned.select(`SELECT filepath FROM scanned_files LIMIT 0`);
     } catch {
       await _scanned.execute(`DROP TABLE scanned_files`);
       await _scanned.execute(`
         CREATE TABLE scanned_files (
-          filename     TEXT NOT NULL,
+          filepath     TEXT NOT NULL,
           connect_code TEXT NOT NULL,
-          PRIMARY KEY (filename, connect_code)
+          PRIMARY KEY (filepath, connect_code)
         )
       `);
     }
@@ -61,7 +60,7 @@ async function initSchema(db: Database) {
   await db.execute(`
     CREATE TABLE IF NOT EXISTS games (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      filename TEXT UNIQUE NOT NULL,
+      filename TEXT NOT NULL,
       timestamp TEXT,
       match_type TEXT,
       player_port INTEGER,
@@ -72,9 +71,43 @@ async function initSchema(db: Database) {
       result TEXT,
       duration_frames INTEGER,
       match_id TEXT,
-      filepath TEXT
+      filepath TEXT UNIQUE NOT NULL
     )
   `);
+
+  // Migrate existing DBs: if games was created with UNIQUE on filename (not filepath),
+  // recreate the table with filepath as the unique key. Game data is re-derivable by
+  // rescanning, so dropping it is safe (equivalent to a force rescan).
+  try {
+    await db.select(`SELECT filepath FROM games LIMIT 0`);
+    // Check whether the old unique constraint is on filename by trying to insert a duplicate filepath.
+    // Simpler: detect by checking sqlite_master for the old schema signature.
+    const tableInfo = await db.select<{ sql: string }[]>(
+      `SELECT sql FROM sqlite_master WHERE type='table' AND name='games'`
+    );
+    if (tableInfo.length > 0 && tableInfo[0].sql.includes("filename TEXT UNIQUE")) {
+      await db.execute(`DROP TABLE games`);
+      await db.execute(`
+        CREATE TABLE games (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          filename TEXT NOT NULL,
+          timestamp TEXT,
+          match_type TEXT,
+          player_port INTEGER,
+          player_char_id INTEGER,
+          opponent_code TEXT,
+          opponent_char_id INTEGER,
+          stage_id INTEGER,
+          result TEXT,
+          duration_frames INTEGER,
+          match_id TEXT,
+          filepath TEXT UNIQUE NOT NULL
+        )
+      `);
+    }
+  } catch {
+    // Table doesn't exist yet — CREATE TABLE IF NOT EXISTS above handled it
+  }
 
   await db.execute(`
     CREATE TABLE IF NOT EXISTS rating_snapshots (
@@ -166,11 +199,12 @@ export async function insertGame(
   game: Omit<GameRow, "id">
 ): Promise<void> {
   await db.execute(
-    `INSERT OR IGNORE INTO games
+    `INSERT INTO games
       (filename, timestamp, match_type, player_port, player_char_id,
        opponent_code, opponent_char_id, stage_id, result,
        duration_frames, match_id, filepath)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     ON CONFLICT(filepath) DO NOTHING`,
     [
       game.filename,
       game.timestamp,
@@ -297,13 +331,13 @@ export async function getSeasons(
 
 // ── Scanned files ──────────────────────────────────────────────────────────
 
-export async function getScannedFilenames(connectCode: string): Promise<Set<string>> {
+export async function getScannedFilepaths(connectCode: string): Promise<Set<string>> {
   const sdb = await getScannedDb();
-  const rows = await sdb.select<{ filename: string }[]>(
-    `SELECT filename FROM scanned_files WHERE connect_code = $1`,
+  const rows = await sdb.select<{ filepath: string }[]>(
+    `SELECT filepath FROM scanned_files WHERE connect_code = $1`,
     [connectCode]
   );
-  return new Set(rows.map((r) => r.filename));
+  return new Set(rows.map((r) => r.filepath));
 }
 
 export async function clearScannedFiles(): Promise<void> {
@@ -335,16 +369,16 @@ export async function getGamesVsOpponent(
   );
 }
 
-export async function markFilesScanned(filenames: string[], connectCode: string): Promise<void> {
-  if (filenames.length === 0) return;
+export async function markFilesScanned(filepaths: string[], connectCode: string): Promise<void> {
+  if (filepaths.length === 0) return;
   const sdb = await getScannedDb();
   const CHUNK = 500;
-  for (let i = 0; i < filenames.length; i += CHUNK) {
-    const chunk = filenames.slice(i, i + CHUNK);
+  for (let i = 0; i < filepaths.length; i += CHUNK) {
+    const chunk = filepaths.slice(i, i + CHUNK);
     const placeholders = chunk.map((_, j) => `($${j * 2 + 1}, $${j * 2 + 2})`).join(", ");
     const values = chunk.flatMap((f) => [f, connectCode]);
     await sdb.execute(
-      `INSERT OR IGNORE INTO scanned_files (filename, connect_code) VALUES ${placeholders}`,
+      `INSERT OR IGNORE INTO scanned_files (filepath, connect_code) VALUES ${placeholders}`,
       values
     );
   }

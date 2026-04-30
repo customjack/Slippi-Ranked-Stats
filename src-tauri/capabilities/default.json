@@ -39,6 +39,8 @@
     "process:default",
     "deep-link:default",
     "deep-link:allow-register",
+    "opener:default",
+    "opener:allow-reveal-item-in-dir",
     {
       "identifier": "http:allow-fetch",
       "allow": [{ "url": "https://discord.com/**" }]
